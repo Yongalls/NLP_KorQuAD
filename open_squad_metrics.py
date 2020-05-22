@@ -422,6 +422,7 @@ def compute_predictions_logits(
         version_2_with_negative,
         null_score_diff_threshold,
         tokenizer,
+        is_test=False,
 ):
     """Write final predictions to the json file and log-odds of null if needed."""
     logger.info("Writing predictions to: %s" % (output_prediction_file))
@@ -601,17 +602,37 @@ def compute_predictions_logits(
                 all_predictions[example.qas_id] = best_non_null_entry.text
         all_nbest_json[example.qas_id] = nbest_json
 
-    with open(output_prediction_file, "w") as writer:
-        writer.write(json.dumps(all_predictions, indent=4) + "\n")
+    if not is_test:
+        with open(output_prediction_file, "w") as writer:
+            writer.write(json.dumps(all_predictions, indent=4) + "\n")
 
-    with open(output_nbest_file, "w") as writer:
-        writer.write(json.dumps(all_nbest_json, indent=4) + "\n")
+        with open(output_nbest_file, "w") as writer:
+            writer.write(json.dumps(all_nbest_json, indent=4) + "\n")
 
-    if version_2_with_negative:
-        with open(output_null_log_odds_file, "w") as writer:
-            writer.write(json.dumps(scores_diff_json, indent=4) + "\n")
+        if version_2_with_negative:
+            with open(output_null_log_odds_file, "w") as writer:
+                writer.write(json.dumps(scores_diff_json, indent=4) + "\n")
 
-    return all_predictions
+        return all_predictions
+
+    else:
+        # Get best answer among different contexts.
+        best_answer_max_prob = collections.OrderedDict()
+        best_answer_text = collections.OrderedDict()
+        for qas_id, nbest_json in all_nbest_json.items():
+            qa_id_without_s = "[SEP]".join(qas_id.split("[SEP]")[:2])
+            text = nbest_json[0]["text"]
+            prob = nbest_json[0]["probability"]
+
+            if qa_id_without_s not in best_answer_max_prob:
+                best_answer_max_prob[qa_id_without_s] = prob
+                best_answer_text[qa_id_without_s] = text
+            else:
+                is_max_prob_updated = prob > best_answer_max_prob[qa_id_without_s]
+                if is_max_prob_updated:
+                    best_answer_max_prob[qa_id_without_s] = prob
+                    best_answer_text[qa_id_without_s] = text
+        return best_answer_text
 
 
 def compute_predictions_log_probs(

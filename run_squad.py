@@ -480,6 +480,7 @@ def predict(args, model, tokenizer, prefix="", val_or_test="val"):
             args.version_2_with_negative,
             args.null_score_diff_threshold,
             tokenizer,
+            is_test=(val_or_test == "test"),
         )
 
     return examples, predictions
