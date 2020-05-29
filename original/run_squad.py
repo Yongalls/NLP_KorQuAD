@@ -142,7 +142,7 @@ def bind_nsml(model, tokenizer, my_args):
     nsml.bind(save=save, load=load, infer=infer)
 
 
-def train(args, train_dataset, model, tokenizer):
+def train(args, train_dataset, model, tokenizer, val_dataset, val_examples, val_features):
     """ Train the model """
 
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
@@ -298,7 +298,7 @@ def train(args, train_dataset, model, tokenizer):
                     # Only evaluate when single GPU otherwise metrics may not average well
                     if args.evaluate_during_training:
                         logger.info("Validation start for epoch {}".format(epoch))
-                        result = evaluate(args, model, tokenizer, prefix=epoch)
+                        result = evaluate(args, model, tokenizer, val_dataset, val_examples, val_features, prefix=epoch)
                         _f1, _exact = result["f1"], result["exact"]
                         is_best = _f1 > best_f1
                         best_f1 = max(_f1, best_f1)
@@ -307,10 +307,10 @@ def train(args, train_dataset, model, tokenizer):
                         logging_loss = tr_loss
 
                         logger.info(
-                            "best_f1_val = {}, f1_val = {}, exact_val = {}, loss = {}, global_step = {}, " \
-                            .format(best_f1, _f1, _exact, current_loss, global_step))
+                            "best_f1_val = {}, f1_val = {}, exact_val = {}, train_loss = {}, global_step = {}, epoch: {}" \
+                            .format(best_f1, _f1, _exact, current_loss, global_step, epoch))
                         if IS_ON_NSML:
-                            nsml.report(summary=True, step=global_step, f1=_f1, exact=_exact, loss=current_loss)
+                            nsml.report(summary=True, step=global_step, f1_val=_f1, exact_val=_exact, loss_train=current_loss)
                             if is_best:
                                 nsml.save(args.model_type + "_best")
 
@@ -347,18 +347,14 @@ def train(args, train_dataset, model, tokenizer):
     return global_step, tr_loss / global_step
 
 
-def evaluate(args, model, tokenizer, prefix="", val_or_test="val"):
-    examples, predictions = predict(args, model, tokenizer, prefix=prefix, val_or_test=val_or_test)
+def evaluate(args, model, tokenizer, val_dataset, val_examples, val_features, prefix="", val_or_test="val"):
+    examples, predictions = predict(args, model, tokenizer, val_dataset, val_examples, val_features, prefix=prefix, val_or_test=val_or_test)
     # Compute the F1 and exact scores.
     results = squad_evaluate(examples, predictions)
     return results
 
 
-def predict(args, model, tokenizer, prefix="", val_or_test="val"):
-    dataset, examples, features = load_and_cache_examples(
-        args, tokenizer, evaluate=True, output_examples=True,
-        val_or_test=val_or_test,
-    )
+def predict(args, model, tokenizer, val_dataset, val_examples, val_features, prefix="", val_or_test="val"):
 
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
@@ -366,8 +362,8 @@ def predict(args, model, tokenizer, prefix="", val_or_test="val"):
     args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
 
     # Note that DistributedSampler samples randomly
-    eval_sampler = SequentialSampler(dataset)
-    eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
+    eval_sampler = SequentialSampler(val_dataset)
+    eval_dataloader = DataLoader(val_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
     # multi-gpu evaluate
     if args.n_gpu > 1 and not isinstance(model, torch.nn.DataParallel):
@@ -375,7 +371,7 @@ def predict(args, model, tokenizer, prefix="", val_or_test="val"):
 
     # Eval!
     logger.info("***** Running evaluation {} *****".format(prefix))
-    logger.info("  Num examples = %d", len(dataset))
+    logger.info("  Num examples = %d", len(val_dataset))
     logger.info("  Batch size = %d", args.eval_batch_size)
 
     all_results = []
@@ -404,7 +400,7 @@ def predict(args, model, tokenizer, prefix="", val_or_test="val"):
             outputs = model(**inputs)
 
         for i, example_index in enumerate(example_indices):
-            eval_feature = features[example_index.item()]
+            eval_feature = val_features[example_index.item()]
             unique_id = int(eval_feature.unique_id)
 
             output = [to_list(output[i]) for output in outputs]
@@ -434,7 +430,7 @@ def predict(args, model, tokenizer, prefix="", val_or_test="val"):
             all_results.append(result)
 
     evalTime = timeit.default_timer() - start_time
-    logger.info("  Evaluation done in total %f secs (%f sec per example)", evalTime, evalTime / len(dataset))
+    logger.info("  Evaluation done in total %f secs (%f sec per example)", evalTime, evalTime / len(val_dataset))
 
     # Compute predictions
     output_prediction_file = os.path.join(args.output_dir, "predictions_{}.json".format(prefix))
@@ -451,8 +447,8 @@ def predict(args, model, tokenizer, prefix="", val_or_test="val"):
         end_n_top = model.config.end_n_top if hasattr(model, "config") else model.module.config.end_n_top
 
         predictions = compute_predictions_log_probs(
-            examples,
-            features,
+            val_examples,
+            val_features,
             all_results,
             args.n_best_size,
             args.max_answer_length,
@@ -467,8 +463,8 @@ def predict(args, model, tokenizer, prefix="", val_or_test="val"):
         )
     else:
         predictions = compute_predictions_logits(
-            examples,
-            features,
+            val_examples,
+            val_features,
             all_results,
             args.n_best_size,
             args.max_answer_length,
@@ -859,7 +855,8 @@ def main():
     # Training
     if args.do_train:
         train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
-        global_step, tr_loss = train(args, train_dataset, model, tokenizer)
+        val_dataset, val_examples, val_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, val_or_test="val")
+        global_step, tr_loss = train(args, train_dataset, model, tokenizer, val_dataset, val_examples, val_features)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
 
