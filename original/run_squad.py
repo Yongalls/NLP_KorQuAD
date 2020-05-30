@@ -25,24 +25,24 @@ from tqdm import tqdm, trange
 
 from transformers import (
     AdamW,
-    AlbertConfig,
-    AlbertForQuestionAnswering,
-    AlbertTokenizer,
+    # AlbertConfig,
+    # AlbertForQuestionAnswering,
+    # AlbertTokenizer,
     BertConfig,
     BertForQuestionAnswering,
     BertTokenizer,
-    DistilBertConfig,
-    DistilBertForQuestionAnswering,
-    DistilBertTokenizer,
-    RobertaConfig,
-    RobertaForQuestionAnswering,
-    RobertaTokenizer,
-    XLMConfig,
-    XLMForQuestionAnswering,
-    XLMTokenizer,
-    XLNetConfig,
-    XLNetForQuestionAnswering,
-    XLNetTokenizer,
+    # DistilBertConfig,
+    # DistilBertForQuestionAnswering,
+    # DistilBertTokenizer,
+    # RobertaConfig,
+    # RobertaForQuestionAnswering,
+    # RobertaTokenizer,
+    # XLMConfig,
+    # XLMForQuestionAnswering,
+    # XLMTokenizer,
+    # XLNetConfig,
+    # XLNetForQuestionAnswering,
+    # XLNetTokenizer,
     get_linear_schedule_with_warmup,
 )
 from open_squad import squad_convert_examples_to_features
@@ -73,18 +73,18 @@ logger = logging.getLogger(__name__)
 handler = logging.StreamHandler(sys.stdout)
 logger.addHandler(handler)
 
-ALL_MODELS = sum(
-    (tuple(conf.pretrained_config_archive_map.keys()) for conf in (BertConfig, RobertaConfig, XLNetConfig, XLMConfig)),
-    (),
-)
+# ALL_MODELS = sum(
+#     (tuple(conf.pretrained_config_archive_map.keys()) for conf in (BertConfig, RobertaConfig, XLNetConfig, XLMConfig)),
+#     (),
+# )
 
 MODEL_CLASSES = {
-    "bert": (BertConfig, BertForQuestionAnswering, BertTokenizer),
-    "roberta": (RobertaConfig, RobertaForQuestionAnswering, RobertaTokenizer),
-    "xlnet": (XLNetConfig, XLNetForQuestionAnswering, XLNetTokenizer),
-    "xlm": (XLMConfig, XLMForQuestionAnswering, XLMTokenizer),
-    "distilbert": (DistilBertConfig, DistilBertForQuestionAnswering, DistilBertTokenizer),
-    "albert": (AlbertConfig, AlbertForQuestionAnswering, AlbertTokenizer),
+    "bert": (BertConfig, BertForQuestionAnswering, BertTokenizer)
+    # "roberta": (RobertaConfig, RobertaForQuestionAnswering, RobertaTokenizer),
+    # "xlnet": (XLNetConfig, XLNetForQuestionAnswering, XLNetTokenizer),
+    # "xlm": (XLMConfig, XLMForQuestionAnswering, XLMTokenizer),
+    # "distilbert": (DistilBertConfig, DistilBertForQuestionAnswering, DistilBertTokenizer),
+    # "albert": (AlbertConfig, AlbertForQuestionAnswering, AlbertTokenizer),
 }
 
 
@@ -479,7 +479,7 @@ def predict(args, model, tokenizer, val_dataset, val_examples, val_features, pre
             is_test=(val_or_test == "test"),
         )
 
-    return examples, predictions
+    return val_examples, predictions
 
 
 def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False, val_or_test="val"):
@@ -573,7 +573,7 @@ def main():
         default=None,
         type=str,
         required=True,
-        help="Path to pre-trained model or shortcut name selected in the list: " + ", ".join(ALL_MODELS),
+        help="Path to pre-trained model or shortcut name selected in the list: " #+ ", ".join(ALL_MODELS),
     )
     parser.add_argument(
         "--output_dir",
