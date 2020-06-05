@@ -325,7 +325,7 @@ class ElectraModel(ElectraPreTrainedModel):
         )
 
         if hasattr(self, "embeddings_project"):
-            print("hidden_states: ", hidden_states.size())
+            #print("hidden_states: ", hidden_states.size())
             hidden_states = self.embeddings_project(hidden_states)
 
         hidden_states = self.encoder(hidden_states, attention_mask=extended_attention_mask, head_mask=head_mask)
