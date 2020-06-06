@@ -649,59 +649,65 @@ class SquadProcessor(DataProcessor):
                     continue
                 qas_id = "{}[SEP]{}[SEP]{}".format(question_text, answer_text, pi)
 
-                context_list = kkma.sentences(context_text)
-                for i_con in range(len(context_list)):
-                    aug = random.randint(0,1)
-                    if answer_text not in context_list[i_con] and aug == 1:
-                        dict_c = kkma.pos(context_list[i_con])
-                        dict_c = np.array(dict_c)
+                if is_training:
+                    try:
+                        context_list = kkma.sentences(context_text)
+                        for i_con in range(len(context_list)):
+                            aug = random.randint(0,1)
+                            if answer_text not in context_list[i_con] and aug == 1:
+                                dict_c = kkma.pos(context_list[i_con])
+                                dict_c = np.array(dict_c)
 
-                        i_JKS = []
-                        i_JKO = []
+                                i_JKS = []
+                                i_JKO = []
 
-                        for i, (_,tag) in enumerate(dict_c):
-                            if tag == 'JX' or tag == 'JKS':
-                                i_JKS.append(i)
-                            if tag == 'JKO':
-                                i_JKO.append(i)
+                                for i, (_,tag) in enumerate(dict_c):
+                                    if tag == 'JX' or tag == 'JKS':
+                                        i_JKS.append(i)
+                                    if tag == 'JKO':
+                                        i_JKO.append(i)
 
-                        # i_JKS < i_JKO : 다윈은,/ 1911년에 찰스 다윈의 이름을/ 따서 지어 진 명칭이라고 한다. --> 1911년에 찰스 다윈의 이름을 다윈은, 따서 지어 진 명칭이라고 한다. => 이상하네 ;;
-                        # i_JKO < i_JKS : 양측 모두 전쟁에서 새로운 무기와 기술을/ 시험하며, 1939년 초에 프랑코가/ 승리한다. --> 시험하며, 1939년 초에 프랑코가 양측 모두 전쟁에서 새로운 무기와 기술을 승리한다.
-                        #                                                                                  --> 시험하며, 1939년 초에 프랑코가/ 승리한다 양측 모두 전쟁에서 새로운 무기와 기술을.
+                                # i_JKS < i_JKO : 다윈은,/ 1911년에 찰스 다윈의 이름을/ 따서 지어 진 명칭이라고 한다. --> 1911년에 찰스 다윈의 이름을 다윈은, 따서 지어 진 명칭이라고 한다. => 이상하네 ;;
+                                # i_JKO < i_JKS : 양측 모두 전쟁에서 새로운 무기와 기술을/ 시험하며, 1939년 초에 프랑코가/ 승리한다. --> 시험하며, 1939년 초에 프랑코가 양측 모두 전쟁에서 새로운 무기와 기술을 승리한다.
+                                #                                                                                  --> 시험하며, 1939년 초에 프랑코가/ 승리한다 양측 모두 전쟁에서 새로운 무기와 기술을.
 
-                        if len(i_JKS) == 1 and len(i_JKO) == 1:
-                            # print("\ncontext {} --> JKS: {}, JKO: {}".format(i_con, i_JKS, i_JKO))
-                            i_JKS = i_JKS[0]
-                            i_JKO = i_JKO[0]
+                                if len(i_JKS) == 1 and len(i_JKO) == 1:
+                                    # print("\ncontext {} --> JKS: {}, JKO: {}".format(i_con, i_JKS, i_JKO))
+                                    i_JKS = i_JKS[0]
+                                    i_JKO = i_JKO[0]
 
-                            if i_JKS < i_JKO:
-                                phrase1 = dict_c[0:i_JKS+1]
-                                phrase2 = dict_c[i_JKS+1:i_JKO+1]
-                                phrase3 = dict_c[i_JKO+1:len(dict_c)]
+                                    if i_JKS < i_JKO:
+                                        phrase1 = dict_c[0:i_JKS+1]
+                                        phrase2 = dict_c[i_JKS+1:i_JKO+1]
+                                        phrase3 = dict_c[i_JKO+1:len(dict_c)]
 
-                                # print("before: ", context_list[i_con])
-                                phrase_all = np.concatenate((phrase2, phrase1, phrase3), 0)
-                                context_list[i_con] = spacing_kkma(phrase_all)
-                                # print("after: ", context_list[i_con])
+                                        # print("before: ", context_list[i_con])
+                                        phrase_all = np.concatenate((phrase2, phrase1, phrase3), 0)
+                                        context_list[i_con] = spacing_kkma(phrase_all)
+                                        # print("after: ", context_list[i_con])
 
-                            else:
-                                phrase1 = dict_c[0:i_JKO+1]
-                                phrase2 = dict_c[i_JKO+1:i_JKS+1]
-                                phrase3 = dict_c[i_JKS+1:len(dict_c)-1]
-                                last = np.expand_dims(dict_c[len(dict_c)-1],axis=0)
+                                    else:
+                                        phrase1 = dict_c[0:i_JKO+1]
+                                        phrase2 = dict_c[i_JKO+1:i_JKS+1]
+                                        phrase3 = dict_c[i_JKS+1:len(dict_c)-1]
+                                        last = np.expand_dims(dict_c[len(dict_c)-1],axis=0)
 
-                                # print("before: ", context_list[i_con])
-                                phrase_all = np.concatenate((phrase2, phrase3, phrase1, last), 0)
-                                context_list[i_con] = spacing_kkma(phrase_all)
-                                # print("after: ", context_list[i_con])
+                                        # print("before: ", context_list[i_con])
+                                        phrase_all = np.concatenate((phrase2, phrase3, phrase1, last), 0)
+                                        context_list[i_con] = spacing_kkma(phrase_all)
+                                        # print("after: ", context_list[i_con])
 
-                # print("\n\n\nquestion: ", question_text)
-                # print("answer: ", answer_text)
+                        # print("\n\n\nquestion: ", question_text)
+                        # print("answer: ", answer_text)
 
-                # print("before total context: ", context_text)
-                context_text = " ".join(context_list)
-                # print("after total context :", context_text)
-                # print("\n\n")
+                        # print("before total context: ", context_text)
+                        context_text = " ".join(context_list)
+                        # print("after total context :", context_text)
+                        # print("\n\n")
+                    except:
+                        print("\nkkma is not working on this context.")
+                        print(context_text)
+                        print("\n")
 
 
                 start_position_character = None
