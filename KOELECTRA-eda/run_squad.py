@@ -114,7 +114,7 @@ def to_list(tensor):
 
 def _infer(model, tokenizer, my_args, root_path):
     my_args.data_dir = root_path
-    _, predictions = predict(my_args, model, tokenizer, val_or_test="test")
+    _, predictions = predict_e(my_args, model, tokenizer, val_or_test="test")
     qid_and_answers = [("test-{}".format(qid), answer) for qid, (_, answer) in enumerate(predictions.items())]
     return qid_and_answers
 
@@ -155,6 +155,7 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
     """ Train the model """
 
     train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
+    print("training dataset loading finished. epoch: 0")
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
@@ -252,6 +253,13 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
     best_f1, best_exact = -1, -1
 
     for epoch in train_iterator:
+        if epoch > 0:
+            train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
+            print("training dataset loading finished. epoch: ", epoch)
+            args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
+            train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+            train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
 
@@ -391,6 +399,134 @@ def evaluate(args, model, tokenizer, val_dataset, val_examples, val_features, pr
 
 
 def predict(args, model, tokenizer, val_dataset, val_examples, val_features, prefix="", val_or_test="val"):
+
+    if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
+        os.makedirs(args.output_dir)
+
+    args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
+
+    # Note that DistributedSampler samples randomly
+    eval_sampler = SequentialSampler(val_dataset)
+    eval_dataloader = DataLoader(val_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
+
+    # multi-gpu evaluate
+    if args.n_gpu > 1 and not isinstance(model, torch.nn.DataParallel):
+        model = torch.nn.DataParallel(model)
+
+    # Eval!
+    logger.info("***** Running evaluation {} *****".format(prefix))
+    logger.info("  Num examples = %d", len(val_dataset))
+    logger.info("  Batch size = %d", args.eval_batch_size)
+
+    all_results = []
+    start_time = timeit.default_timer()
+
+    for batch in tqdm(eval_dataloader, desc="Evaluating"):
+        model.eval()
+        batch = tuple(t.to(args.device) for t in batch)
+
+        with torch.no_grad():
+            inputs = {
+                "input_ids": batch[0],
+                "attention_mask": batch[1],
+                "token_type_ids": batch[2],
+            }
+
+            if args.model_type in ["xlm", "roberta", "distilbert"]:
+                del inputs["token_type_ids"]
+
+            example_indices = batch[3]
+
+            # XLNet and XLM use more arguments for their predictions
+            if args.model_type in ["xlnet", "xlm"]:
+                inputs.update({"cls_index": batch[4], "p_mask": batch[5]})
+
+            outputs = model(**inputs)
+
+        for i, example_index in enumerate(example_indices):
+            eval_feature = val_features[example_index.item()]
+            unique_id = int(eval_feature.unique_id)
+
+            output = [to_list(output[i]) for output in outputs]
+
+            # Some models (XLNet, XLM) use 5 arguments for their predictions, while the other "simpler"
+            # models only use two.
+            if len(output) >= 5:
+                start_logits = output[0]
+                start_top_index = output[1]
+                end_logits = output[2]
+                end_top_index = output[3]
+                cls_logits = output[4]
+
+                result = SquadResult(
+                    unique_id,
+                    start_logits,
+                    end_logits,
+                    start_top_index=start_top_index,
+                    end_top_index=end_top_index,
+                    cls_logits=cls_logits,
+                )
+
+            else:
+                start_logits, end_logits = output
+                result = SquadResult(unique_id, start_logits, end_logits)
+
+            all_results.append(result)
+
+    evalTime = timeit.default_timer() - start_time
+    logger.info("  Evaluation done in total %f secs (%f sec per example)", evalTime, evalTime / len(val_dataset))
+
+    # Compute predictions
+    output_prediction_file = os.path.join(args.output_dir, "predictions_{}.json".format(prefix))
+    output_nbest_file = os.path.join(args.output_dir, "nbest_predictions_{}.json".format(prefix))
+
+    if args.version_2_with_negative:
+        output_null_log_odds_file = os.path.join(args.output_dir, "null_odds_{}.json".format(prefix))
+    else:
+        output_null_log_odds_file = None
+
+    # XLNet and XLM use a more complex post-processing procedure
+    if args.model_type in ["xlnet", "xlm"]:
+        start_n_top = model.config.start_n_top if hasattr(model, "config") else model.module.config.start_n_top
+        end_n_top = model.config.end_n_top if hasattr(model, "config") else model.module.config.end_n_top
+
+        predictions = compute_predictions_log_probs(
+            val_examples,
+            val_features,
+            all_results,
+            args.n_best_size,
+            args.max_answer_length,
+            output_prediction_file,
+            output_nbest_file,
+            output_null_log_odds_file,
+            start_n_top,
+            end_n_top,
+            args.version_2_with_negative,
+            tokenizer,
+            args.verbose_logging,
+        )
+    else:
+        predictions = compute_predictions_logits(
+            val_examples,
+            val_features,
+            all_results,
+            args.n_best_size,
+            args.max_answer_length,
+            args.do_lower_case,
+            output_prediction_file,
+            output_nbest_file,
+            output_null_log_odds_file,
+            args.verbose_logging,
+            args.version_2_with_negative,
+            args.null_score_diff_threshold,
+            tokenizer,
+            is_test=(val_or_test == "test"),
+        )
+
+    return val_examples, predictions
+
+def predict_e(args, model, tokenizer, prefix="", val_or_test="test"):
+    val_dataset, val_examples, val_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, val_or_test="test")
 
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)

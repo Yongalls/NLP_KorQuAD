@@ -519,7 +519,7 @@ def predict(args, model, tokenizer, val_dataset, val_examples, val_features, pre
 
 def predict_e(args, model, tokenizer, prefix="", val_or_test="val"):
 
-    val_dataset, val_examples, val_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, val_or_test="val")
+    val_dataset, val_examples, val_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, val_or_test="test")
 
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
