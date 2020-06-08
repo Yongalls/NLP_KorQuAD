@@ -3,7 +3,7 @@ import os
 
 import torch
 import torch.nn as nn
-from torch.nn import CrossEntropyLoss, MSELoss
+from torch.nn import CrossEntropyLoss, MSELoss, KLDivLoss
 
 from .activations import get_activation
 from .configuration_electra import ElectraConfig
@@ -728,7 +728,7 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
         self.electra = ElectraModel(config)
         self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
 
-        self.start_weight = 1
+        self.dist_outputs = nn.Linear(config.hidden_size, 1)
 
         self.init_weights()
 
@@ -753,6 +753,31 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
 
         sequence_output = outputs[0]
 
+
+
+        '''
+        {
+          "architectures": [
+            "ElectraForMaskedLM"
+          ],
+          "attention_probs_dropout_prob": 0.1,
+          "hidden_size": 256,
+          "intermediate_size": 1024,
+          "num_attention_heads": 4,
+          "num_hidden_layers": 12,
+          "embedding_size": 768,
+          "hidden_act": "gelu",
+          "hidden_dropout_prob": 0.1,
+          "initializer_range": 0.02,
+          "layer_norm_eps": 1e-12,
+          "max_position_embeddings": 512,
+          "model_type": "electra",
+          "type_vocab_size": 2,
+          "vocab_size": 32200,
+          "pad_token_id": 0
+        }
+
+        '''
         # print("sequence output: ", sequence_output.size())
 
         logits = self.qa_outputs(sequence_output)
@@ -772,43 +797,19 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
             start_positions.clamp_(0, ignored_index)
             end_positions.clamp_(0, ignored_index)
 
-            #print("Start position, End position: {}, {}".format(start_positions, end_positions))
+            loss_fct = torch.nn.CrossEntropyLoss(ignore_index=ignored_index)
+            start_loss = loss_fct(start_logits, start_positions)
+            end_loss = loss_fct(end_logits, end_positions)
+            total_loss = (start_loss + end_loss) / 2
+            #outputs = (total_loss,) + outputs
 
-            unanswerable = end_positions[:]==0
-            answerable = end_positions[:]!=0
-            #print("Start logit shape {}, start logit[answerable] shape {}".format(start_logits.size(), start_logits[answerable].size()))
-            #print("Start position shape {}, start position[answerable] shape {}".format(start_positions.size(), start_positions[answerable].size()))
+        dist_logits = self.dist_outputs(sequence_output)
+        plain_logits = dist_logits[:24]
+        aug_logits = dist_logits[24:]
+        loss_fct2 = torch.nn.KLDivLoss(size_average=True)
 
-            unans_len = torch.sum(unanswerable)
-            ans_len = torch.sum(answerable)
-
-            #print("Answerable/unanswerable filter: {}, {}".format(answerable, unanswerable))
-            #print(ans_len, unans_len, ans_len+unans_len)
-
-            if ans_len>0 and unans_len>0:
-                loss_fct = torch.nn.CrossEntropyLoss(ignore_index=ignored_index)
-
-                start_loss_answerable = loss_fct(start_logits[answerable], start_positions[answerable])*ans_len / (ans_len+unans_len)
-                start_loss_unanswerable = loss_fct(start_logits[unanswerable], start_positions[unanswerable])*unans_len/ (ans_len+unans_len)
-
-                end_loss_answerable = loss_fct(end_logits[answerable], end_positions[answerable])*ans_len/ (ans_len+unans_len)
-                end_loss_unanswerable = loss_fct(end_logits[unanswerable], end_positions[unanswerable])*unans_len/ (ans_len+unans_len)
-
-
-                # start_loss = loss_fct(start_logits, start_positions)
-                # end_loss = loss_fct(end_logits, end_positions)
-                answerable_loss = (start_loss_answerable + end_loss_answerable)
-                unanswerable_loss = (start_loss_unanswerable + end_loss_unanswerable)
-
-                total_loss = (2*answerable_loss + unanswerable_loss) / 3
-            else:
-                assert ans_len==0
-                loss_fct = torch.nn.CrossEntropyLoss(ignore_index=ignored_index)
-                start_loss = loss_fct(start_logits, start_positions)
-                end_loss = loss_fct(end_logits, end_positions)
-
-                total_loss = (start_loss + end_loss) / 2
-
-            outputs = (total_loss,) + outputs
+        dist_loss = loss_fct2(plain_logits, aug_logits)
+        total_loss += dist_loss
+        outputs = (total_loss,) + outputs
 
         return outputs  # (loss), start_logits, end_logits, (hidden_states), (attentions)
