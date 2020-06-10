@@ -244,7 +244,7 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
 
     loss_val, logging_loss = 0.0, 0.0
     span_loss_val, span_logging_loss = 0.0, 0.0
-    msd_loss_val, msd_logging_loss = 0.0, 0.0
+    dist_loss_val, dist_logging_loss = 0.0, 0.0
 
     model.zero_grad()
     train_iterator = trange(
@@ -304,10 +304,10 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
             # print("after forward")
 
             # model outputs are always tuple in transformers (see doc)
-            # span_loss = outputs[0]
-            # msd_loss = outputs[1]
-            # loss = span_loss + msd_loss
-            loss = outputs[0]
+            span_loss = outputs[0]
+            dist_loss = outputs[1]
+            loss = span_loss + dist_loss
+            # loss = outputs[0]
 
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
@@ -321,8 +321,8 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
                 loss.backward()
 
             loss_val += loss.item()
-            # span_loss_val += span_loss.item()
-            # msd_loss_val += msd_loss.item()
+            span_loss_val += span_loss.item()
+            dist_loss_val += dist_loss.item()
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
@@ -347,26 +347,26 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
 
                         current_loss = (loss_val - logging_loss) / args.logging_steps
                         logging_loss = loss_val
-                        # current_loss_span = (span_loss_val - span_logging_loss) / args.logging_steps
-                        # span_logging_loss = span_loss_val
-                        # current_loss_msd = (msd_loss_val - msd_logging_loss) / args.logging_steps
-                        # msd_logging_loss = msd_loss_val
+                        current_loss_span = (span_loss_val - span_logging_loss) / args.logging_steps
+                        span_logging_loss = span_loss_val
+                        current_loss_dist = (dist_loss_val - dist_logging_loss) / args.logging_steps
+                        dist_logging_loss = dist_loss_val
 
 
-                        # logger.info(
-                        #     "best_f1_val = {}, f1_val = {}, exact_val = {}, train_loss_total = {}, train_loss_span = {}, train_loss_msd = {}, global_step = {}, epoch: {}" \
-                        #     .format(best_f1, _f1, _exact, current_loss, current_loss_span, current_loss_msd, global_step, epoch))
-                        # if IS_ON_NSML:
-                        #     nsml.report(summary=True, step=global_step, f1_val=_f1, exact_val=_exact, train_loss_total=current_loss, train_loss_span=current_loss_span, train_loss_msd=current_loss_msd)
-                        #     if is_best:
-                        #         nsml.save(args.model_type + "_best")
                         logger.info(
-                            "best_f1_val = {}, f1_val = {}, exact_val = {}, train_loss_total = {}, global_step = {}, epoch: {}" \
-                            .format(best_f1, _f1, _exact, current_loss, global_step, epoch))
+                            "best_f1_val = {}, f1_val = {}, exact_val = {}, train_loss_total = {}, train_loss_span = {}, train_loss_dist = {}, global_step = {}, epoch: {}" \
+                            .format(best_f1, _f1, _exact, current_loss, current_loss_span, current_loss_dist, global_step, epoch))
                         if IS_ON_NSML:
-                            nsml.report(summary=True, step=global_step, f1_val=_f1, exact_val=_exact, train_loss_total=current_loss)
+                            nsml.report(summary=True, step=global_step, f1_val=_f1, exact_val=_exact, train_loss_total=current_loss, train_loss_span=current_loss_span, train_loss_dist=current_loss_dist)
                             if is_best:
                                 nsml.save(args.model_type + "_best")
+                        # logger.info(
+                        #     "best_f1_val = {}, f1_val = {}, exact_val = {}, train_loss_total = {}, global_step = {}, epoch: {}" \
+                        #     .format(best_f1, _f1, _exact, current_loss, global_step, epoch))
+                        # if IS_ON_NSML:
+                        #     nsml.report(summary=True, step=global_step, f1_val=_f1, exact_val=_exact, train_loss_total=current_loss)
+                        #     if is_best:
+                        #         nsml.save(args.model_type + "_best")
 
                 if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
                     if IS_ON_NSML:

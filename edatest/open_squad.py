@@ -145,8 +145,7 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
     sequence_pair_added_tokens = tokenizer.max_len - tokenizer.max_len_sentences_pair
 
     span_doc_tokens = all_doc_tokens
-    print(all_doc_tokens)
-    print(len(all_doc_tokens))
+
     while len(spans) * doc_stride < len(all_doc_tokens):
 
         # print("padding_side: ", tokenizer.padding_side)
@@ -327,6 +326,8 @@ def squad_convert_examples_to_features_train(
         print("squad_convert_examples_to_features")
         features = []
         aug_features = []
+        features_len = []
+        aug_features_len = []
         for eg in tqdm(examples, total=len(examples), desc="convert squad examples to features"):
             feat = squad_convert_example_to_features_sp(
                 eg,
@@ -335,11 +336,7 @@ def squad_convert_examples_to_features_train(
                 max_query_length=max_query_length,
                 is_training=is_training,
                 tokenizer_for_convert=tokenizer)
-            if len(feat)>=2:
-                for idx, feature in enumerate(feat):
-                    print(idx, feature.end_position)
-            if len(feat)==0:
-                print("Convert failed")
+            features_len.append(len(feat))
             features.append(feat)
         for eg in tqdm(aug_examples, total=len(aug_examples), desc="convert squad examples to features"):
             feat = squad_convert_example_to_features_sp(
@@ -349,14 +346,9 @@ def squad_convert_examples_to_features_train(
                 max_query_length=max_query_length,
                 is_training=is_training,
                 tokenizer_for_convert=tokenizer)
-            if len(feat)>=2:
-                for idx, feature in enumerate(feat):
-                    print(idx, feature.end_position)
-            if len(feat)==0:
-                print("Convert failed")
+            aug_features_len.append(len(feat))
             aug_features.append(feat)
 
-        print(len(features),len(aug_features))
 
     else:
         print("squad_convert_examples_to_features w/ {} threads".format(threads))
@@ -379,8 +371,10 @@ def squad_convert_examples_to_features_train(
     new_features = []
     unique_id = 1000000000
     example_index = 0
+    i_feat = -1
     for example_features in tqdm(features, total=len(features), desc="add example index and unique id"):
-        if not example_features:
+        i_feat += 1
+        if not example_features or len(example_features) != aug_features_len[i_feat]:
             continue
         for example_feature in example_features:
             example_feature.example_index = example_index
@@ -394,8 +388,10 @@ def squad_convert_examples_to_features_train(
     aug_new_features = []
     unique_id = 1000000000
     example_index = 0
+    i_feat = -1
     for example_features in tqdm(aug_features, total=len(aug_features), desc="add example index and unique id"):
-        if not example_features:
+        i_feat += 1
+        if not example_features or len(example_features) != features_len[i_feat]:
             continue
         for example_feature in example_features:
             example_feature.example_index = example_index
@@ -426,8 +422,6 @@ def squad_convert_examples_to_features_train(
         aug_all_p_mask = torch.tensor([f.p_mask for f in aug_features], dtype=torch.float)
 
 
-        print(len(features),len(aug_features))
-
         if not is_training:
             all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
             dataset = TensorDataset(
@@ -441,6 +435,28 @@ def squad_convert_examples_to_features_train(
             aug_all_start_positions = torch.tensor([f.start_position for f in aug_features], dtype=torch.long)
             aug_all_end_positions = torch.tensor([f.end_position for f in aug_features], dtype=torch.long)
             aug_all_is_mixed = torch.tensor([f.is_mixed for f in aug_features], dtype=torch.long)
+
+            if len(features) != len(aug_features):
+                print("len(features) is not equal to len(aug_features) => ",len(features), len(aug_features))
+                dataset = TensorDataset(
+                    all_input_ids,
+                    all_attention_masks,
+                    all_token_type_ids,
+                    all_start_positions,
+                    all_end_positions,
+                    all_cls_index,
+                    all_p_mask,
+                    all_is_mixed,
+                    all_input_ids,
+                    all_attention_masks,
+                    all_token_type_ids,
+                    all_start_positions,
+                    all_end_positions,
+                    all_cls_index,
+                    all_p_mask,
+                    all_is_mixed
+                )
+                return features, dataset
 
             dataset = TensorDataset(
                 all_input_ids,
@@ -783,12 +799,11 @@ class SquadProcessor(DataProcessor):
         aug_examples = []
 
         has_answer_cnt, no_answer_cnt = 0, 0
-        i_test = 0
+        # i_test = 0
         for entry in tqdm(input_data[:]):
-            i_test += 1
-            print(i_test)
-            if i_test >= 10:
-                break
+            # i_test += 1
+            # if i_test >= 100:
+            #     break
             qa = entry['qa']
             question_text = qa["question"]
             answer_text = qa['answer']
@@ -830,15 +845,63 @@ class SquadProcessor(DataProcessor):
                 else:
                     is_impossible = False
                 if is_training:
-                    print("before")
-                    context text -> x answer y (yongall's algorithm)
-                    x = eda_context(x)
-                    y = eda_context(y)
-                    list = [x,answer,y]
-                    aug context text = '. '.join(list)
+                    if is_impossible:
+                        aug_context_text = eda_context(context_text,"")
+                    else:
+                        # print("\nbefore context")
+                        # print(context_text)
+                        # print("answer: ", answer_text)
 
-                    aug_context_text = eda_context(context_text, answer_text)
+                        end_pos = context_text.index(answer_text) + len(answer_text)
+
+                        if end_pos >= len(context_text) or _is_whitespace(context_text[end_pos]):
+                            aug_answer_text = answer_text
+                        else:
+                            i_ct = end_pos
+                            aug_answer_text = answer_text
+                            while i_ct < len(context_text) and not _is_whitespace(context_text[i_ct]):
+                                aug_answer_text += context_text[i_ct]
+                                i_ct += 1
+
+                        # print("becomes: ", aug_answer_text)
+                        context_text_list = context_text.split(aug_answer_text)
+                        aug_context_text_list = []
+                        for ct in context_text_list:
+                            aug_context_text_list.append(eda_context(ct,answer_text))
+                        aug_context_text = aug_answer_text.join(aug_context_text_list)
+                        # print(len(context_text.split(answer_text)))
+                        # context_text_list = context_text.split('. ')
+                        # # print(len(context_text_list))
+                        # aug_context_text_list = []
+                        # ct_temp = ""
+                        # for ct in context_text_list:
+                        #     if answer_text in ct:
+                        #         aug_context_text_list.append((ct_temp, "no ans"))
+                        #         aug_context_text_list.append((ct + ". ", "ans"))
+                        #         ct_temp = ""
+                        #     else:
+                        #         ct_temp += ct + ". "
+                        #
+                        # if ct_temp != "":
+                        #     aug_context_text_list.append((ct_temp, "no ans"))
+                        #
+                        # aug_context_text = ""
+                        #
+                        # for (aug_ct,tag) in aug_context_text_list:
+                        #     if tag == "no ans":
+                        #         aug_context_text += eda_context(aug_ct, "")
+                        #     else:
+                        #         aug_context_text += aug_ct
+
+
+                        # print("after context")
+                        # print(aug_context_text)
+                    # aug_context_text = eda_context(context_text, answer_text)
                     if not is_impossible and answer_text not in aug_context_text:
+                        print(context_text)
+                        print(answer_text)
+                        print(aug_answer_text)
+                        print(aug_context_text)
                         raise AnswerError
 
 
@@ -846,6 +909,7 @@ class SquadProcessor(DataProcessor):
                 if not is_impossible:
                     if is_training:
                         start_position_character = context_text.index(answer_text)  # answer["answer_start"]
+                        start_position_character_aug = aug_context_text.index(answer_text)
                     else:
                         answers = [{"text": answer_text,
                                     "answer_start": context_text.index(answer_text)}]
@@ -884,7 +948,7 @@ class SquadProcessor(DataProcessor):
                         question_text=aug_question_text,
                         context_text=aug_context_text,
                         answer_text=answer_text,
-                        start_position_character=start_position_character,
+                        start_position_character=start_position_character_aug,
                         title=title,
                         is_impossible=is_impossible,
                         answers=answers,
