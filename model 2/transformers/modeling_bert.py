@@ -1404,6 +1404,8 @@ class BertForQuestionAnswering(BertPreTrainedModel):
         self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
         self.msd = nn.Linear(config.hidden_size, 2)
 
+        self.dist_outputs = nn.Linear(config.hidden_size, 1)
+
         self.init_weights()
 
     @add_start_docstrings_to_callable(BERT_INPUTS_DOCSTRING)
@@ -1484,17 +1486,55 @@ class BertForQuestionAnswering(BertPreTrainedModel):
         # print("\n\nBert QA")
         # print("sequence_output: ", sequence_output.size())
 
-        logits = self.qa_outputs(sequence_output)
 
+
+
+        '''
+        {
+          "architectures": [
+            "ElectraForMaskedLM"
+          ],
+          "attention_probs_dropout_prob": 0.1,
+          "hidden_size": 256,
+          "intermediate_size": 1024,
+          "num_attention_heads": 4,
+          "num_hidden_layers": 12,
+          "embedding_size": 768,
+          "hidden_act": "gelu",
+          "hidden_dropout_prob": 0.1,
+          "initializer_range": 0.02,
+          "layer_norm_eps": 1e-12,
+          "max_position_embeddings": 512,
+          "model_type": "electra",
+          "type_vocab_size": 2,
+          "vocab_size": 32200,
+          "pad_token_id": 0
+        }
+
+        '''
+        #print("sequence output: ", sequence_output.size())
+
+        logits = self.qa_outputs(sequence_output)
+        #print("logit: ", logits.size())
         start_logits, end_logits = logits.split(1, dim=-1)
-        # print("start: ", start_logits.size())
-        # print("end: ", end_logits.size())
         start_logits = start_logits.squeeze(-1)
+        #print("start_logit: ", start_logits.size())
         end_logits = end_logits.squeeze(-1)
 
         outputs = (start_logits, end_logits,) + outputs[2:]
 
         if start_positions is not None and end_positions is not None:
+            dist_logits = self.dist_outputs(sequence_output)
+            #print("dist_logit: ", dist_logits.size())
+            bs = dist_logits.size()[0]
+            plain_logits = dist_logits[:int(bs/2)]
+            aug_logits = dist_logits[int(bs/2):]
+            #print("plain_logit: ", plain_logits.size())
+            loss_fct2 = torch.nn.MSELoss()
+
+
+            dist_loss = loss_fct2(plain_logits, aug_logits)
+            #print(dist_loss)
             # If we are on multi-GPU, split add a dimension
             if len(start_positions.size()) > 1:
                 start_positions = start_positions.squeeze(-1)
@@ -1505,21 +1545,13 @@ class BertForQuestionAnswering(BertPreTrainedModel):
             start_positions.clamp_(0, ignored_index)
             end_positions.clamp_(0, ignored_index)
 
-            loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
-            # print("start_logits: {}, start_positions: {}".format(start_logits.size(), start_positions.size()))
+            loss_fct = torch.nn.CrossEntropyLoss(ignore_index=ignored_index)
             start_loss = loss_fct(start_logits, start_positions)
             end_loss = loss_fct(end_logits, end_positions)
             span_loss = (start_loss + end_loss) / 2
+            #print(span_loss)
+            outputs = (span_loss, dist_loss, ) + outputs
 
-            if is_mixed is None:
-                return (span_loss,) + outputs
 
-            msd_logits = self.msd(pooled_output)
-            loss_fct = CrossEntropyLoss()
-            msd_loss = loss_fct(msd_logits, is_mixed)
-
-            # total_loss = span_loss + msd_loss
-            outputs = (span_loss, msd_loss) + outputs
-            # print(span_loss, msd_loss, total_loss)
 
         return outputs  # (loss), start_logits, end_logits, (hidden_states), (attentions)

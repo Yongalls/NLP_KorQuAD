@@ -902,6 +902,9 @@ def main():
              "A number of warnings are expected for a normal SQuAD evaluation.",
     )
 
+    parser.add_argument("--dropout", type=float, default=0.1)
+
+
     parser.add_argument("--logging_steps", type=int, default=100, help="Log every X updates steps.")
     parser.add_argument("--save_steps", type=int, default=1000, help="Save checkpoint every X updates steps.")
     parser.add_argument(
@@ -1009,6 +1012,12 @@ def main():
         args.config_name if args.config_name else args.model_name_or_path,
         cache_dir=args.cache_dir if args.cache_dir else None,
     )
+
+    if args.dropout != 0.1:
+        config.hidden_dropout_prob = args.dropout
+        config.attention_probs_dropout_prob = args.dropout
+
+
     tokenizer = tokenizer_class.from_pretrained(
         args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
         do_lower_case=args.do_lower_case,
