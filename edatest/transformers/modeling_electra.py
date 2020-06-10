@@ -778,23 +778,29 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
         }
 
         '''
-        # print("sequence output: ", sequence_output.size())
+        #print("sequence output: ", sequence_output.size())
 
         logits = self.qa_outputs(sequence_output)
+        #print("logit: ", logits.size())
         start_logits, end_logits = logits.split(1, dim=-1)
         start_logits = start_logits.squeeze(-1)
+        #print("start_logit: ", start_logits.size())
         end_logits = end_logits.squeeze(-1)
 
         outputs = (start_logits, end_logits,) + outputs[2:]
 
         if start_positions is not None and end_positions is not None:
             dist_logits = self.dist_outputs(sequence_output)
+            #print("dist_logit: ", dist_logits.size())
             bs = dist_logits.size()[0]
             plain_logits = dist_logits[:int(bs/2)]
             aug_logits = dist_logits[int(bs/2):]
-            loss_fct2 = torch.nn.KLDivLoss(size_average=True)
+            #print("plain_logit: ", plain_logits.size())
+            loss_fct2 = torch.nn.MSELoss()
+
 
             dist_loss = loss_fct2(plain_logits, aug_logits)
+            #print(dist_loss)
             # If we are on multi-GPU, split add a dimension
             if len(start_positions.size()) > 1:
                 start_positions = start_positions.squeeze(-1)
@@ -809,7 +815,9 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
             start_loss = loss_fct(start_logits, start_positions)
             end_loss = loss_fct(end_logits, end_positions)
             span_loss = (start_loss + end_loss) / 2
+            #print(span_loss)
             outputs = (span_loss, dist_loss, ) + outputs
+        
 
 
         return outputs  # (loss), start_logits, end_logits, (hidden_states), (attentions)

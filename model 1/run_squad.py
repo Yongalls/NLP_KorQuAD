@@ -252,6 +252,13 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
     best_f1, best_exact = -1, -1
 
     for epoch in train_iterator:
+        if epoch > 0:
+            train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
+            print("training dataset loading finished. epoch: ", epoch)
+            args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
+            train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+            train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
 

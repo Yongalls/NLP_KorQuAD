@@ -30,6 +30,7 @@ if is_tf_available():
 
 from eda import eda_context, eda_question
 
+
 logger = logging.getLogger(__name__)
 handler = logging.StreamHandler(sys.stdout)
 logger.addHandler(handler)
@@ -108,7 +109,6 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
         cleaned_answer_text = " ".join(whitespace_tokenize(example.answer_text))
         if actual_text.find(cleaned_answer_text) == -1:
             # logger.warning("Could not find answer: '%s' vs. '%s'", actual_text, cleaned_answer_text)
-            print("hoxy?")
             return []
 
     tok_to_orig_index = []
@@ -145,7 +145,6 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
     sequence_pair_added_tokens = tokenizer.max_len - tokenizer.max_len_sentences_pair
 
     span_doc_tokens = all_doc_tokens
-
     while len(spans) * doc_stride < len(all_doc_tokens):
 
         # print("padding_side: ", tokenizer.padding_side)
@@ -280,250 +279,8 @@ def squad_convert_example_to_features_sp(example, max_seq_length, doc_stride, ma
     tokenizer = tokenizer_for_convert
     return squad_convert_example_to_features(example, max_seq_length, doc_stride, max_query_length, is_training)
 
-def squad_convert_examples_to_features_train(
-        examples, aug_examples, tokenizer, max_seq_length, doc_stride, max_query_length, is_training, return_dataset=False, threads=1
-):
-    """
-    Converts a list of examples into a list of features that can be directly given as input to a model.
-    It is model-dependant and takes advantage of many of the tokenizer's features to create the model's inputs.
 
-    Args:
-        examples: list of :class:`~transformers.data.processors.squad.SquadExample`
-        tokenizer: an instance of a child of :class:`~transformers.PreTrainedTokenizer`
-        max_seq_length: The maximum sequence length of the inputs.
-        doc_stride: The stride used when the context is too large and is split across several features.
-        max_query_length: The maximum length of the query.
-        is_training: whether to create features for model evaluation or model training.
-        return_dataset: Default False. Either 'pt' or 'tf'.
-            if 'pt': returns a torch.data.TensorDataset,
-            if 'tf': returns a tf.data.Dataset
-        threads: multiple processing threadsa-smi
-
-
-    Returns:
-        list of :class:`~transformers.data.processors.squad.SquadFeatures`
-
-    Example::
-
-        processor = SquadV2Processor()
-        examples = processor.get_dev_examples(data_dir)
-
-        features = squad_convert_examples_to_features(
-            examples=examples,
-            tokenizer=tokenizer,
-            max_seq_length=args.max_seq_length,
-            doc_stride=args.doc_stride,
-            max_query_length=args.max_query_length,
-            is_training=not evaluate,
-        )
-    """
-
-    # Defining helper methods
-    features = []
-    aug_features = []
-    threads = min(threads, cpu_count())
-    if threads == 1:
-        print("squad_convert_examples_to_features")
-        features = []
-        aug_features = []
-        features_len = []
-        aug_features_len = []
-        for eg in tqdm(examples, total=len(examples), desc="convert squad examples to features"):
-            feat = squad_convert_example_to_features_sp(
-                eg,
-                max_seq_length=max_seq_length,
-                doc_stride=doc_stride,
-                max_query_length=max_query_length,
-                is_training=is_training,
-                tokenizer_for_convert=tokenizer)
-            features_len.append(len(feat))
-            features.append(feat)
-        for eg in tqdm(aug_examples, total=len(aug_examples), desc="convert squad examples to features"):
-            feat = squad_convert_example_to_features_sp(
-                eg,
-                max_seq_length=max_seq_length,
-                doc_stride=doc_stride,
-                max_query_length=max_query_length,
-                is_training=is_training,
-                tokenizer_for_convert=tokenizer)
-            aug_features_len.append(len(feat))
-            aug_features.append(feat)
-
-
-    else:
-        print("squad_convert_examples_to_features w/ {} threads".format(threads))
-        with Pool(threads, initializer=squad_convert_example_to_features_init, initargs=(tokenizer,)) as p:
-            annotate_ = partial(
-                squad_convert_example_to_features,
-                max_seq_length=max_seq_length,
-                doc_stride=doc_stride,
-                max_query_length=max_query_length,
-                is_training=is_training,
-            )
-            features = list(
-                tqdm(
-                    p.imap(annotate_, examples, chunksize=32),
-                    total=len(examples),
-                    desc="convert squad examples to features",
-                )
-            )
-
-    new_features = []
-    unique_id = 1000000000
-    example_index = 0
-    i_feat = -1
-    for example_features in tqdm(features, total=len(features), desc="add example index and unique id"):
-        i_feat += 1
-        if not example_features or len(example_features) != aug_features_len[i_feat]:
-            continue
-        for example_feature in example_features:
-            example_feature.example_index = example_index
-            example_feature.unique_id = unique_id
-            new_features.append(example_feature)
-            unique_id += 1
-        example_index += 1
-    features = new_features
-    del new_features
-
-    aug_new_features = []
-    unique_id = 1000000000
-    example_index = 0
-    i_feat = -1
-    for example_features in tqdm(aug_features, total=len(aug_features), desc="add example index and unique id"):
-        i_feat += 1
-        if not example_features or len(example_features) != features_len[i_feat]:
-            continue
-        for example_feature in example_features:
-            example_feature.example_index = example_index
-            example_feature.unique_id = unique_id
-            aug_new_features.append(example_feature)
-            unique_id += 1
-        example_index += 1
-    aug_features = aug_new_features
-    del aug_new_features
-
-
-
-    if return_dataset == "pt":
-        if not is_torch_available():
-            raise RuntimeError("PyTorch must be installed to return a PyTorch dataset.")
-
-        # Convert to Tensors and build dataset
-        all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
-        all_attention_masks = torch.tensor([f.attention_mask for f in features], dtype=torch.long)
-        all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
-        all_cls_index = torch.tensor([f.cls_index for f in features], dtype=torch.long)
-        all_p_mask = torch.tensor([f.p_mask for f in features], dtype=torch.float)
-
-        aug_all_input_ids = torch.tensor([f.input_ids for f in aug_features], dtype=torch.long)
-        aug_all_attention_masks = torch.tensor([f.attention_mask for f in aug_features], dtype=torch.long)
-        aug_all_token_type_ids = torch.tensor([f.token_type_ids for f in aug_features], dtype=torch.long)
-        aug_all_cls_index = torch.tensor([f.cls_index for f in aug_features], dtype=torch.long)
-        aug_all_p_mask = torch.tensor([f.p_mask for f in aug_features], dtype=torch.float)
-
-
-        if not is_training:
-            all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
-            dataset = TensorDataset(
-                all_input_ids, all_attention_masks, all_token_type_ids, all_example_index, all_cls_index, all_p_mask
-            )
-        else:
-            all_start_positions = torch.tensor([f.start_position for f in features], dtype=torch.long)
-            all_end_positions = torch.tensor([f.end_position for f in features], dtype=torch.long)
-            all_is_mixed = torch.tensor([f.is_mixed for f in features], dtype=torch.long)
-
-            aug_all_start_positions = torch.tensor([f.start_position for f in aug_features], dtype=torch.long)
-            aug_all_end_positions = torch.tensor([f.end_position for f in aug_features], dtype=torch.long)
-            aug_all_is_mixed = torch.tensor([f.is_mixed for f in aug_features], dtype=torch.long)
-
-            if len(features) != len(aug_features):
-                print("len(features) is not equal to len(aug_features) => ",len(features), len(aug_features))
-                dataset = TensorDataset(
-                    all_input_ids,
-                    all_attention_masks,
-                    all_token_type_ids,
-                    all_start_positions,
-                    all_end_positions,
-                    all_cls_index,
-                    all_p_mask,
-                    all_is_mixed,
-                    all_input_ids,
-                    all_attention_masks,
-                    all_token_type_ids,
-                    all_start_positions,
-                    all_end_positions,
-                    all_cls_index,
-                    all_p_mask,
-                    all_is_mixed
-                )
-                return features, dataset
-
-            dataset = TensorDataset(
-                all_input_ids,
-                all_attention_masks,
-                all_token_type_ids,
-                all_start_positions,
-                all_end_positions,
-                all_cls_index,
-                all_p_mask,
-                all_is_mixed,
-                aug_all_input_ids,
-                aug_all_attention_masks,
-                aug_all_token_type_ids,
-                aug_all_start_positions,
-                aug_all_end_positions,
-                aug_all_cls_index,
-                aug_all_p_mask,
-                aug_all_is_mixed
-            )
-
-        return features, dataset
-    elif return_dataset == "tf":
-        if not is_tf_available():
-            raise RuntimeError("TensorFlow must be installed to return a TensorFlow dataset.")
-
-        def gen():
-            for ex in features:
-                yield (
-                    {
-                        "input_ids": ex.input_ids,
-                        "attention_mask": ex.attention_mask,
-                        "token_type_ids": ex.token_type_ids,
-                    },
-                    {
-                        "start_position": ex.start_position,
-                        "end_position": ex.end_position,
-                        "cls_index": ex.cls_index,
-                        "p_mask": ex.p_mask,
-                    },
-                )
-
-        return tf.data.Dataset.from_generator(
-            gen,
-            (
-                {"input_ids": tf.int32, "attention_mask": tf.int32, "token_type_ids": tf.int32},
-                {"start_position": tf.int64, "end_position": tf.int64, "cls_index": tf.int64, "p_mask": tf.int32},
-            ),
-            (
-                {
-                    "input_ids": tf.TensorShape([None]),
-                    "attention_mask": tf.TensorShape([None]),
-                    "token_type_ids": tf.TensorShape([None]),
-                },
-                {
-                    "start_position": tf.TensorShape([]),
-                    "end_position": tf.TensorShape([]),
-                    "cls_index": tf.TensorShape([]),
-                    "p_mask": tf.TensorShape([None]),
-                },
-            ),
-        )
-
-    return features
-
-
-
-def squad_convert_examples_to_features_evaluate(
+def squad_convert_examples_to_features(
         examples, tokenizer, max_seq_length, doc_stride, max_query_length, is_training, return_dataset=False, threads=1
 ):
     """
@@ -796,13 +553,12 @@ class SquadProcessor(DataProcessor):
     def _create_examples(self, input_data, set_type):
         is_training = set_type == "train"
         examples = []
-        aug_examples = []
 
         has_answer_cnt, no_answer_cnt = 0, 0
         i_test = 0
         for entry in tqdm(input_data[:]):
             # i_test += 1
-            # if i_test >= 100:
+            # if i_test >= 30:
             #     break
             qa = entry['qa']
             question_text = qa["question"]
@@ -810,22 +566,9 @@ class SquadProcessor(DataProcessor):
             if question_text is None or answer_text is None:
                 continue
 
-            # if is_training:
-            #     mix = random.randint(0,1)
-            #     if mix == 1:
-            #         q_words = question_text.split(' ')
-            #         cut = len(q_words)//2
-            #         q_words = q_words[cut:] + q_words[:cut]
-            #         question_text = " ".join(q_words)
-            # else:
-            #     mix = 0
-
-            #print("Question: {}, Answer: {}".format(question_text, answer_text))
+            mix = 0
             if is_training:
                 aug_question_text = eda_question(question_text)
-
-            #print("EDA question: {}".format(augquestion))
-            mix = 0
 
             per_qa_paragraph_cnt = 0
             per_qa_unans_paragraph_cnt = 0
@@ -838,12 +581,11 @@ class SquadProcessor(DataProcessor):
                 start_position_character = None
                 answers = []
 
-                #print("Context: {}".format(context_text))
-
                 if answer_text not in context_text:
                     is_impossible = True
                 else:
                     is_impossible = False
+
                 if is_training:
                     if is_impossible:
                         aug_context_text = eda_context(context_text,"")
@@ -904,69 +646,53 @@ class SquadProcessor(DataProcessor):
                         print(aug_context_text)
                         raise AnswerError
 
-
-                #print("eda context: {}".format(augcontext))
                 if not is_impossible:
                     if is_training:
                         start_position_character = context_text.index(answer_text)  # answer["answer_start"]
-                        start_position_character_aug = aug_context_text.index(answer_text)
+                        aug_start_position_character = aug_context_text.index(answer_text)
                     else:
                         answers = [{"text": answer_text,
                                     "answer_start": context_text.index(answer_text)}]
-
-
-
-                #print(is_impossible, example.start_position, example.end_position)
+                if not is_training:
+                    example = SquadExample(
+                        qas_id=qas_id,
+                        question_text=question_text,
+                        context_text=context_text,
+                        answer_text=answer_text,
+                        start_position_character=start_position_character,
+                        title=title,
+                        is_impossible=is_impossible,
+                        answers=answers,
+                        is_mixed=mix
+                    )
+                else:
+                    example = SquadExample(
+                        qas_id=qas_id,
+                        question_text=aug_question_text,
+                        context_text=aug_context_text,
+                        answer_text=answer_text,
+                        start_position_character=aug_start_position_character,
+                        title=title,
+                        is_impossible=is_impossible,
+                        answers=answers,
+                        is_mixed=mix
+                    )
                 if is_impossible:
                     no_answer_cnt += 1
                     per_qa_unans_paragraph_cnt += 1
                 else:
                     has_answer_cnt += 1
 
-                if is_impossible and per_qa_unans_paragraph_cnt > 2:
+                if is_impossible and per_qa_unans_paragraph_cnt > 3:
                     continue
                 # train 메모리때문에 개수제한
                 per_qa_paragraph_cnt += 1
-                if is_training and per_qa_paragraph_cnt > 2:
+                if is_training and per_qa_paragraph_cnt > 3:
                     break
-
-                example = SquadExample(
-                    qas_id=qas_id,
-                    question_text=question_text,
-                    context_text=context_text,
-                    answer_text=answer_text,
-                    start_position_character=start_position_character,
-                    title=title,
-                    is_impossible=is_impossible,
-                    answers=answers,
-                    is_mixed=mix
-                )
-
-                if is_training:
-                    aug_example = SquadExample(
-                        qas_id=qas_id,
-                        question_text=aug_question_text,
-                        context_text=aug_context_text,
-                        answer_text=answer_text,
-                        start_position_character=start_position_character_aug,
-                        title=title,
-                        is_impossible=is_impossible,
-                        answers=answers,
-                        is_mixed=mix
-                    )
-
                 examples.append(example)
-                if is_training:
-                    aug_examples.append(aug_example)
 
         print("[{}] Has Answer({}) / No Answer({})".format(set_type, has_answer_cnt, no_answer_cnt))
-
-
-        if not is_training:
-            return examples
-        assert len(examples)==len(aug_examples)
-        print(len(examples), len(aug_examples))
-        return examples, aug_examples
+        return examples
 
 
 class SquadV1Processor(SquadProcessor):

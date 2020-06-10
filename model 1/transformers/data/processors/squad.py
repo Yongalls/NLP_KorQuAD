@@ -1,25 +1,16 @@
-"""
-KorQuAD open 형 데이터 processor
-
-본 스크립트는 다음의 파일을 바탕으로 작성 됨
-https://github.com/huggingface/transformers/blob/master/src/transformers/data/processors/squad.py
-
-"""
-
 import json
 import logging
 import os
-import sys
 from functools import partial
 from multiprocessing import Pool, cpu_count
-import random
 
 import numpy as np
 from tqdm import tqdm
 
-from transformers.file_utils import is_tf_available, is_torch_available
-from transformers.tokenization_bert import whitespace_tokenize
-from transformers.data.processors.utils import DataProcessor
+from ...file_utils import is_tf_available, is_torch_available
+from ...tokenization_bert import whitespace_tokenize
+from .utils import DataProcessor
+
 
 if is_torch_available():
     import torch
@@ -29,8 +20,6 @@ if is_tf_available():
     import tensorflow as tf
 
 logger = logging.getLogger(__name__)
-handler = logging.StreamHandler(sys.stdout)
-logger.addHandler(handler)
 
 
 def _improve_answer_span(doc_tokens, input_start, input_end, tokenizer, orig_answer_text):
@@ -39,7 +28,7 @@ def _improve_answer_span(doc_tokens, input_start, input_end, tokenizer, orig_ans
 
     for new_start in range(input_start, input_end + 1):
         for new_end in range(input_end, new_start - 1, -1):
-            text_span = " ".join(doc_tokens[new_start: (new_end + 1)])
+            text_span = " ".join(doc_tokens[new_start : (new_end + 1)])
             if text_span == tok_answer_text:
                 return (new_start, new_end)
 
@@ -102,10 +91,10 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
         end_position = example.end_position
 
         # If the answer cannot be found in the text, then skip this example.
-        actual_text = " ".join(example.doc_tokens[start_position: (end_position + 1)])
+        actual_text = " ".join(example.doc_tokens[start_position : (end_position + 1)])
         cleaned_answer_text = " ".join(whitespace_tokenize(example.answer_text))
         if actual_text.find(cleaned_answer_text) == -1:
-            # logger.warning("Could not find answer: '%s' vs. '%s'", actual_text, cleaned_answer_text)
+            logger.warning("Could not find answer: '%s' vs. '%s'", actual_text, cleaned_answer_text)
             return []
 
     tok_to_orig_index = []
@@ -117,8 +106,6 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
         for sub_token in sub_tokens:
             tok_to_orig_index.append(i)
             all_doc_tokens.append(sub_token)
-
-    # print("all doc tokens: ", all_doc_tokens)
 
     if is_training and not example.is_impossible:
         tok_start_position = orig_to_tok_index[example.start_position]
@@ -136,7 +123,7 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
     truncated_query = tokenizer.encode(example.question_text, add_special_tokens=False, max_length=max_query_length)
     sequence_added_tokens = (
         tokenizer.max_len - tokenizer.max_len_single_sentence + 1
-        if "roberta" in str(type(tokenizer))
+        if "roberta" in str(type(tokenizer)) or "camembert" in str(type(tokenizer))
         else tokenizer.max_len - tokenizer.max_len_single_sentence
     )
     sequence_pair_added_tokens = tokenizer.max_len - tokenizer.max_len_sentences_pair
@@ -144,9 +131,6 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
     span_doc_tokens = all_doc_tokens
     while len(spans) * doc_stride < len(all_doc_tokens):
 
-        # print("padding_side: ", tokenizer.padding_side)
-        # print(span_doc_tokens)
-        # print(truncated_query)
         encoded_dict = tokenizer.encode_plus(
             truncated_query if tokenizer.padding_side == "right" else span_doc_tokens,
             span_doc_tokens if tokenizer.padding_side == "right" else truncated_query,
@@ -155,6 +139,7 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
             pad_to_max_length=True,
             stride=max_seq_length - doc_stride - len(truncated_query) - sequence_pair_added_tokens,
             truncation_strategy="only_second" if tokenizer.padding_side == "right" else "only_first",
+            return_token_type_ids=True,
         )
 
         paragraph_len = min(
@@ -163,7 +148,14 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
         )
 
         if tokenizer.pad_token_id in encoded_dict["input_ids"]:
-            non_padded_ids = encoded_dict["input_ids"][: encoded_dict["input_ids"].index(tokenizer.pad_token_id)]
+            if tokenizer.padding_side == "right":
+                non_padded_ids = encoded_dict["input_ids"][: encoded_dict["input_ids"].index(tokenizer.pad_token_id)]
+            else:
+                last_padding_id_position = (
+                    len(encoded_dict["input_ids"]) - 1 - encoded_dict["input_ids"][::-1].index(tokenizer.pad_token_id)
+                )
+                non_padded_ids = encoded_dict["input_ids"][last_padding_id_position + 1 :]
+
         else:
             non_padded_ids = encoded_dict["input_ids"]
 
@@ -203,18 +195,22 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
         cls_index = span["input_ids"].index(tokenizer.cls_token_id)
 
         # p_mask: mask with 1 for token than cannot be in the answer (0 for token which can be in an answer)
-        # Original TF implem also keep the classification token (set to 0) (not sure why...)
-        p_mask = np.array(span["token_type_ids"])
-
-        p_mask = np.minimum(p_mask, 1)
-
+        # Original TF implem also keep the classification token (set to 0)
+        p_mask = np.ones_like(span["token_type_ids"])
         if tokenizer.padding_side == "right":
-            # Limit positive values to one
-            p_mask = 1 - p_mask
+            p_mask[len(truncated_query) + sequence_added_tokens :] = 0
+        else:
+            p_mask[-len(span["tokens"]) : -(len(truncated_query) + sequence_added_tokens)] = 0
 
-        p_mask[np.where(np.array(span["input_ids"]) == tokenizer.sep_token_id)[0]] = 1
+        pad_token_indices = np.where(span["input_ids"] == tokenizer.pad_token_id)
+        special_token_indices = np.asarray(
+            tokenizer.get_special_tokens_mask(span["input_ids"], already_has_special_tokens=True)
+        ).nonzero()
 
-        # Set the CLS index to '0'
+        p_mask[pad_token_indices] = 1
+        p_mask[special_token_indices] = 1
+
+        # Set the cls index to 0: the CLS index can be used for impossible answers
         p_mask[cls_index] = 0
 
         span_is_impossible = example.is_impossible
@@ -250,8 +246,7 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
                 span["token_type_ids"],
                 cls_index,
                 p_mask.tolist(),
-                example_index=0,
-                # Can not set unique_id and example_index here. They will be set after multiple processing.
+                example_index=0,  # Can not set unique_id and example_index here. They will be set after multiple processing.
                 unique_id=0,
                 paragraph_len=span["paragraph_len"],
                 token_is_max_context=span["token_is_max_context"],
@@ -259,7 +254,8 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
                 token_to_orig_map=span["token_to_orig_map"],
                 start_position=start_position,
                 end_position=end_position,
-                is_mixed=example.is_mixed
+                is_impossible=span_is_impossible,
+                qas_id=example.qas_id,
             )
         )
     return features
@@ -270,15 +266,16 @@ def squad_convert_example_to_features_init(tokenizer_for_convert):
     tokenizer = tokenizer_for_convert
 
 
-def squad_convert_example_to_features_sp(example, max_seq_length, doc_stride, max_query_length, is_training,
-                                         tokenizer_for_convert):
-    global tokenizer
-    tokenizer = tokenizer_for_convert
-    return squad_convert_example_to_features(example, max_seq_length, doc_stride, max_query_length, is_training)
-
-
 def squad_convert_examples_to_features(
-        examples, tokenizer, max_seq_length, doc_stride, max_query_length, is_training, return_dataset=False, threads=1
+    examples,
+    tokenizer,
+    max_seq_length,
+    doc_stride,
+    max_query_length,
+    is_training,
+    return_dataset=False,
+    threads=1,
+    tqdm_enabled=True,
 ):
     """
     Converts a list of examples into a list of features that can be directly given as input to a model.
@@ -318,41 +315,28 @@ def squad_convert_examples_to_features(
     # Defining helper methods
     features = []
     threads = min(threads, cpu_count())
-    if threads == 1:
-        print("squad_convert_examples_to_features")
-        features = []
-        for eg in tqdm(examples, total=len(examples), desc="convert squad examples to features"):
-            feat = squad_convert_example_to_features_sp(
-                eg,
-                max_seq_length=max_seq_length,
-                doc_stride=doc_stride,
-                max_query_length=max_query_length,
-                is_training=is_training,
-                tokenizer_for_convert=tokenizer)
-            features.append(feat)
-
-    else:
-        print("squad_convert_examples_to_features w/ {} threads".format(threads))
-        with Pool(threads, initializer=squad_convert_example_to_features_init, initargs=(tokenizer,)) as p:
-            annotate_ = partial(
-                squad_convert_example_to_features,
-                max_seq_length=max_seq_length,
-                doc_stride=doc_stride,
-                max_query_length=max_query_length,
-                is_training=is_training,
+    with Pool(threads, initializer=squad_convert_example_to_features_init, initargs=(tokenizer,)) as p:
+        annotate_ = partial(
+            squad_convert_example_to_features,
+            max_seq_length=max_seq_length,
+            doc_stride=doc_stride,
+            max_query_length=max_query_length,
+            is_training=is_training,
+        )
+        features = list(
+            tqdm(
+                p.imap(annotate_, examples, chunksize=32),
+                total=len(examples),
+                desc="convert squad examples to features",
+                disable=not tqdm_enabled,
             )
-            features = list(
-                tqdm(
-                    p.imap(annotate_, examples, chunksize=32),
-                    total=len(examples),
-                    desc="convert squad examples to features",
-                )
-            )
-
+        )
     new_features = []
     unique_id = 1000000000
     example_index = 0
-    for example_features in tqdm(features, total=len(features), desc="add example index and unique id"):
+    for example_features in tqdm(
+        features, total=len(features), desc="add example index and unique id", disable=not tqdm_enabled
+    ):
         if not example_features:
             continue
         for example_feature in example_features:
@@ -373,17 +357,16 @@ def squad_convert_examples_to_features(
         all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
         all_cls_index = torch.tensor([f.cls_index for f in features], dtype=torch.long)
         all_p_mask = torch.tensor([f.p_mask for f in features], dtype=torch.float)
+        all_is_impossible = torch.tensor([f.is_impossible for f in features], dtype=torch.float)
 
         if not is_training:
-            all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
+            all_feature_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
             dataset = TensorDataset(
-                all_input_ids, all_attention_masks, all_token_type_ids, all_example_index, all_cls_index, all_p_mask
+                all_input_ids, all_attention_masks, all_token_type_ids, all_feature_index, all_cls_index, all_p_mask
             )
         else:
             all_start_positions = torch.tensor([f.start_position for f in features], dtype=torch.long)
             all_end_positions = torch.tensor([f.end_position for f in features], dtype=torch.long)
-            all_is_mixed = torch.tensor([f.is_mixed for f in features], dtype=torch.long)
-
             dataset = TensorDataset(
                 all_input_ids,
                 all_attention_masks,
@@ -392,7 +375,7 @@ def squad_convert_examples_to_features(
                 all_end_positions,
                 all_cls_index,
                 all_p_mask,
-                all_is_mixed
+                all_is_impossible,
             )
 
         return features, dataset
@@ -401,43 +384,62 @@ def squad_convert_examples_to_features(
             raise RuntimeError("TensorFlow must be installed to return a TensorFlow dataset.")
 
         def gen():
-            for ex in features:
+            for i, ex in enumerate(features):
                 yield (
                     {
                         "input_ids": ex.input_ids,
                         "attention_mask": ex.attention_mask,
                         "token_type_ids": ex.token_type_ids,
+                        "feature_index": i,
+                        "qas_id": ex.qas_id,
                     },
                     {
                         "start_position": ex.start_position,
                         "end_position": ex.end_position,
                         "cls_index": ex.cls_index,
                         "p_mask": ex.p_mask,
+                        "is_impossible": ex.is_impossible,
                     },
                 )
 
-        return tf.data.Dataset.from_generator(
-            gen,
-            (
-                {"input_ids": tf.int32, "attention_mask": tf.int32, "token_type_ids": tf.int32},
-                {"start_position": tf.int64, "end_position": tf.int64, "cls_index": tf.int64, "p_mask": tf.int32},
-            ),
-            (
-                {
-                    "input_ids": tf.TensorShape([None]),
-                    "attention_mask": tf.TensorShape([None]),
-                    "token_type_ids": tf.TensorShape([None]),
-                },
-                {
-                    "start_position": tf.TensorShape([]),
-                    "end_position": tf.TensorShape([]),
-                    "cls_index": tf.TensorShape([]),
-                    "p_mask": tf.TensorShape([None]),
-                },
-            ),
+        # Why have we split the batch into a tuple? PyTorch just has a list of tensors.
+        train_types = (
+            {
+                "input_ids": tf.int32,
+                "attention_mask": tf.int32,
+                "token_type_ids": tf.int32,
+                "feature_index": tf.int64,
+                "qas_id": tf.string,
+            },
+            {
+                "start_position": tf.int64,
+                "end_position": tf.int64,
+                "cls_index": tf.int64,
+                "p_mask": tf.int32,
+                "is_impossible": tf.int32,
+            },
         )
 
-    return features
+        train_shapes = (
+            {
+                "input_ids": tf.TensorShape([None]),
+                "attention_mask": tf.TensorShape([None]),
+                "token_type_ids": tf.TensorShape([None]),
+                "feature_index": tf.TensorShape([]),
+                "qas_id": tf.TensorShape([]),
+            },
+            {
+                "start_position": tf.TensorShape([]),
+                "end_position": tf.TensorShape([]),
+                "cls_index": tf.TensorShape([]),
+                "p_mask": tf.TensorShape([None]),
+                "is_impossible": tf.TensorShape([]),
+            },
+        )
+
+        return tf.data.Dataset.from_generator(gen, train_types, train_shapes)
+    else:
+        return features
 
 
 class SquadProcessor(DataProcessor):
@@ -521,12 +523,12 @@ class SquadProcessor(DataProcessor):
             raise ValueError("SquadProcessor should be instantiated via SquadV1Processor or SquadV2Processor")
 
         with open(
-                os.path.join(data_dir, self.train_file if filename is None else filename), "r", encoding="utf-8"
+            os.path.join(data_dir, self.train_file if filename is None else filename), "r", encoding="utf-8"
         ) as reader:
             input_data = json.load(reader)["data"]
         return self._create_examples(input_data, "train")
 
-    def get_eval_examples(self, data_dir, filename=None):
+    def get_dev_examples(self, data_dir, filename=None):
         """
         Returns the evaluation example from the data directory.
 
@@ -542,7 +544,7 @@ class SquadProcessor(DataProcessor):
             raise ValueError("SquadProcessor should be instantiated via SquadV1Processor or SquadV2Processor")
 
         with open(
-                os.path.join(data_dir, self.dev_file if filename is None else filename), "r", encoding="utf-8"
+            os.path.join(data_dir, self.dev_file if filename is None else filename), "r", encoding="utf-8"
         ) as reader:
             input_data = json.load(reader)["data"]
         return self._create_examples(input_data, "dev")
@@ -550,80 +552,42 @@ class SquadProcessor(DataProcessor):
     def _create_examples(self, input_data, set_type):
         is_training = set_type == "train"
         examples = []
+        for entry in tqdm(input_data):
+            title = entry["title"]
+            for paragraph in entry["paragraphs"]:
+                context_text = paragraph["context"]
+                for qa in paragraph["qas"]:
+                    qas_id = qa["id"]
+                    question_text = qa["question"]
+                    start_position_character = None
+                    answer_text = None
+                    answers = []
 
-        has_answer_cnt, no_answer_cnt = 0, 0
-        i_test = 0
-        for entry in tqdm(input_data[:]):
-            # i_test += 1
-            # if i_test >= 30:
-            #     break
-            qa = entry['qa']
-            question_text = qa["question"]
-            answer_text = qa['answer']
-            if question_text is None or answer_text is None:
-                continue
-
-            # if is_training:
-            #     mix = random.randint(0,1)
-            #     if mix == 1:
-            #         q_words = question_text.split(' ')
-            #         cut = len(q_words)//2
-            #         q_words = q_words[cut:] + q_words[:cut]
-            #         question_text = " ".join(q_words)
-            # else:
-            #     mix = 0
-
-            mix = 0
-
-            per_qa_paragraph_cnt = 0
-            per_qa_unans_paragraph_cnt = 0
-            for pi, paragraph in enumerate(entry["paragraphs"]):
-                title = paragraph["title"]
-                context_text = str(paragraph["contents"])
-                if context_text is None:
-                    continue
-                qas_id = "{}[SEP]{}[SEP]{}".format(question_text, answer_text, pi)
-                start_position_character = None
-                answers = []
-
-                if answer_text not in context_text:
-                    is_impossible = True
-                else:
-                    is_impossible = False
-
-                if not is_impossible:
-                    if is_training:
-                        start_position_character = context_text.index(answer_text)  # answer["answer_start"]
+                    if "is_impossible" in qa:
+                        is_impossible = qa["is_impossible"]
                     else:
-                        answers = [{"text": answer_text,
-                                    "answer_start": context_text.index(answer_text)}]
+                        is_impossible = False
 
-                example = SquadExample(
-                    qas_id=qas_id,
-                    question_text=question_text,
-                    context_text=context_text,
-                    answer_text=answer_text,
-                    start_position_character=start_position_character,
-                    title=title,
-                    is_impossible=is_impossible,
-                    answers=answers,
-                    is_mixed=mix
-                )
-                if is_impossible:
-                    no_answer_cnt += 1
-                    per_qa_unans_paragraph_cnt += 1
-                else:
-                    has_answer_cnt += 1
+                    if not is_impossible:
+                        if is_training:
+                            answer = qa["answers"][0]
+                            answer_text = answer["text"]
+                            start_position_character = answer["answer_start"]
+                        else:
+                            answers = qa["answers"]
 
-                if is_impossible and per_qa_unans_paragraph_cnt > 3:
-                    continue
-                # train 메모리때문에 개수제한
-                per_qa_paragraph_cnt += 1
-                if is_training and per_qa_paragraph_cnt > 3:
-                    break
-                examples.append(example)
+                    example = SquadExample(
+                        qas_id=qas_id,
+                        question_text=question_text,
+                        context_text=context_text,
+                        answer_text=answer_text,
+                        start_position_character=start_position_character,
+                        title=title,
+                        is_impossible=is_impossible,
+                        answers=answers,
+                    )
 
-        print("[{}] Has Answer({}) / No Answer({})".format(set_type, has_answer_cnt, no_answer_cnt))
+                    examples.append(example)
         return examples
 
 
@@ -633,9 +597,8 @@ class SquadV1Processor(SquadProcessor):
 
 
 class SquadV2Processor(SquadProcessor):
-    train_file = "train_data/korquad_open_train.json"
-    dev_file = "train_data/korquad_open_dev.json"
-    test_file = "test_data/korquad_open_test.json"
+    train_file = "train-v2.0.json"
+    dev_file = "dev-v2.0.json"
 
 
 class SquadExample(object):
@@ -654,16 +617,15 @@ class SquadExample(object):
     """
 
     def __init__(
-            self,
-            qas_id,
-            question_text,
-            context_text,
-            answer_text,
-            start_position_character,
-            title,
-            answers=[],
-            is_impossible=False,
-            is_mixed=0
+        self,
+        qas_id,
+        question_text,
+        context_text,
+        answer_text,
+        start_position_character,
+        title,
+        answers=[],
+        is_impossible=False,
     ):
         self.qas_id = qas_id
         self.question_text = question_text
@@ -674,8 +636,6 @@ class SquadExample(object):
         self.answers = answers
 
         self.start_position, self.end_position = 0, 0
-
-        self.is_mixed = is_mixed
 
         doc_tokens = []
         char_to_word_offset = []
@@ -696,7 +656,7 @@ class SquadExample(object):
         self.doc_tokens = doc_tokens
         self.char_to_word_offset = char_to_word_offset
 
-        # Start end end positions only has a value during evaluation.
+        # Start and end positions only has a value during evaluation.
         if start_position_character is not None and not is_impossible:
             self.start_position = char_to_word_offset[start_position_character]
             self.end_position = char_to_word_offset[
@@ -730,21 +690,22 @@ class SquadFeatures(object):
     """
 
     def __init__(
-            self,
-            input_ids,
-            attention_mask,
-            token_type_ids,
-            cls_index,
-            p_mask,
-            example_index,
-            unique_id,
-            paragraph_len,
-            token_is_max_context,
-            tokens,
-            token_to_orig_map,
-            start_position,
-            end_position,
-            is_mixed
+        self,
+        input_ids,
+        attention_mask,
+        token_type_ids,
+        cls_index,
+        p_mask,
+        example_index,
+        unique_id,
+        paragraph_len,
+        token_is_max_context,
+        tokens,
+        token_to_orig_map,
+        start_position,
+        end_position,
+        is_impossible,
+        qas_id: str = None,
     ):
         self.input_ids = input_ids
         self.attention_mask = attention_mask
@@ -761,7 +722,8 @@ class SquadFeatures(object):
 
         self.start_position = start_position
         self.end_position = end_position
-        self.is_mixed = is_mixed
+        self.is_impossible = is_impossible
+        self.qas_id = qas_id
 
 
 class SquadResult(object):
