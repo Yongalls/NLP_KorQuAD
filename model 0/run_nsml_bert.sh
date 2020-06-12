@@ -17,9 +17,8 @@ nsml run \
     --per_gpu_eval_batch_size 24
     --output_dir output
     --overwrite_output_dir
-    --logging_steps 300
+    --logging_steps 320
     --version_2_with_negative
-    --start_loss False
-    --answer_loss False
     --dropout 0.2
+    --gradient_accumulation_steps 16
     "

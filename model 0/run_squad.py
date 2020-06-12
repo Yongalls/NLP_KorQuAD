@@ -872,8 +872,8 @@ def main():
              "A number of warnings are expected for a normal SQuAD evaluation.",
     )
 
-    parser.add_argument("--answer_loss", default=False)
-    parser.add_argument("--start_loss", default=False)
+    parser.add_argument("--answer_loss", action="store_true")
+    parser.add_argument("--start_loss", action="store_true")
     parser.add_argument("--dropout", type=float, default=0.1)
 
     parser.add_argument("--logging_steps", type=int, default=100, help="Log every X updates steps.")
@@ -1019,6 +1019,9 @@ def main():
     ################################
 
     logger.info("Training/evaluation parameters %s", args)
+
+    print("Load model")
+    nsml.load(checkpoint='electra_best', session='kaist_15/korquad-open-ldbd/310')
 
     # Before we do anything with models, we want to ensure that we get fp16 execution of torch.einsum if args.fp16 is
     # set. Otherwise it'll default to "promote" mode, and we'll get fp32 operations. Note that running

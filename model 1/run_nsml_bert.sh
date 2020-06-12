@@ -19,7 +19,5 @@ nsml run \
     --overwrite_output_dir
     --logging_steps 300
     --version_2_with_negative
-    --start_loss False
-    --answer_loss False
     --dropout 0.2
     "
