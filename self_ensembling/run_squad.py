@@ -160,7 +160,7 @@ def bind_nsml(model, tokenizer, my_args):
     nsml.bind(save=save, load=load, infer=infer)
 
 
-def train(args, model, teacher, tokenizer, val_dataset, val_examples, val_features):
+def train(args, model, tokenizer, val_dataset, val_examples, val_features, test_dataset, test_examples, test_features):
     """ Train the model """
 
     train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
@@ -183,7 +183,7 @@ def train(args, model, teacher, tokenizer, val_dataset, val_examples, val_featur
         },
         {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], "weight_decay": 0.0},
     ]
-    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+    optimizer = AdamW(optimizer_grouped_parameters, lr=1e-5, eps=args.adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
     )
@@ -354,8 +354,8 @@ def train(args, model, teacher, tokenizer, val_dataset, val_examples, val_featur
                         logger.info("Validation start for epoch {}".format(epoch))
                         result = evaluate(args, model, tokenizer, val_dataset, val_examples, val_features, prefix=epoch)
                         _f1, _exact = result["f1"], result["exact"]
-                        is_best = _f1 > best_f1
-                        best_f1 = max(_f1, best_f1)
+                        # is_best = _f1 > best_f1
+                        # best_f1 = max(_f1, best_f1)
 
                         current_loss = (loss_val - logging_loss) / args.logging_steps
                         logging_loss = loss_val
@@ -364,12 +364,17 @@ def train(args, model, teacher, tokenizer, val_dataset, val_examples, val_featur
                         current_loss_mse = (mse_loss_val - mse_logging_loss) / args.logging_steps
                         mse_logging_loss = mse_loss_val
 
+                        logger.info("Validation for test set start for epoch {}".format(epoch))
+                        result_test = evaluate(args, model, tokenizer, test_dataset, test_examples, test_features, prefix=epoch)
+                        _f1_test, _exact_test = result_test["f1"], result_test["exact"]
+                        is_best = _f1_test > best_f1
+                        best_f1 = max(_f1_test, best_f1)
 
                         logger.info(
-                            "best_f1_val = {}, f1_val = {}, exact_val = {}, train_loss_total = {}, train_loss_mse = {}, global_step = {}, epoch: {}" \
-                            .format(best_f1, _f1, _exact, current_loss, current_loss_mse, global_step, epoch))
+                            "best_f1_val_test = {}, f1_val_validation = {}, exact_val_validation = {}, f1_val_test = {}, exact_val_test = {}, train_loss_total = {},  train_loss_mse = {}, global_step = {}, epoch: {}" \
+                            .format(best_f1, _f1, _exact, _f1_test, _exact_test, current_loss, current_loss_mse, global_step, epoch))
                         if IS_ON_NSML:
-                            nsml.report(summary=True, step=global_step, f1_val=_f1, exact_val=_exact, train_loss_total=current_loss, train_loss_mse=current_loss_mse)
+                            nsml.report(summary=True, step=global_step, f1_val_validation=_f1, exact_val_validation=_exact, f1_val_test=_f1_test, exact_val_test=_exact_test, train_loss_total=current_loss, train_loss_mse=current_loss_mse)
                             if is_best:
                                 nsml.save(args.model_type + "_best")
                         # logger.info(
@@ -685,7 +690,7 @@ def predict_e(args, model, tokenizer, prefix="", val_or_test="val"):
     return val_examples, predictions
 
 
-def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False, val_or_test="val"):
+def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False, val_or_test="val", strange=False):
     if args.local_rank not in [-1, 0] and not evaluate:
         # Make sure only the first process in distributed training process the dataset,
         # and the others will use the cache.
@@ -731,7 +736,10 @@ def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=Fal
                 filename = args.predict_file if val_or_test == "val" else "test_data/korquad_open_test.json"
                 examples = processor.get_eval_examples(args.data_dir, filename=filename)
             else:
-                examples = processor.get_train_examples(args.data_dir, filename=args.train_file)
+                if strange:
+                    examples = processor.get_eval_examples('/app', filename='korquad_open_test_submit.json')
+                else:
+                    examples = processor.get_train_examples(args.data_dir, filename=args.train_file)
 
         print("Starting squad_convert_examples_to_features")
         features, dataset = squad_convert_examples_to_features(
@@ -1086,7 +1094,8 @@ def main():
     # Training
     if args.do_train:
         val_dataset, val_examples, val_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, val_or_test="val")
-        global_step, tr_loss = train(args, student, teacher, tokenizer, val_dataset, val_examples, val_features)
+        test_dataset, test_examples, test_features = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=True, strange=True)
+        global_step, tr_loss = train(args, model, tokenizer, val_dataset, val_examples, val_features, test_dataset, test_examples, test_features)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
 

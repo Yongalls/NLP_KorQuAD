@@ -20,6 +20,6 @@ nsml run \
     --logging_steps 100
     --version_2_with_negative
     --dropout 0.1
-    --K 3
+    --K 5
     --gradient_accumulation_steps 4
     "
