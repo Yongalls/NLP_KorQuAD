@@ -1,16 +1,13 @@
-# korquad-open-cs492h
-Korquad-Open Baseline Code for KAIST CS492H 2020 Spring
-
-## Original Author
-Seonhoon Kim (Naver)
+# Self_Distillation
+SDA(Self Distillation Averaged) and SDV(Self Distillation Voted) models are implemented in this directory. 
 
 ## Train in NSML
+We only used ELECTRA model in this experiment. 
 ```bash
-sh run_nsml.sh
+sh run_nsml_electra.sh
 ```
 
-## Train in Local
-
+## Hyperparameter Tuning in shell
 ```bash
-sh run_local.sh
+--K 5 #Changing K value for model
 ```
