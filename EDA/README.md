@@ -1,16 +1,12 @@
-# korquad-open-cs492h
-Korquad-Open Baseline Code for KAIST CS492H 2020 Spring
-
-## Original Author
-Seonhoon Kim (Naver)
+# EDA
+This contains codes for EDA models for our experiments
+- Strong_EDA refers to augmenting data for 10% of intensity. 
+- Weak_EDA is for 5% of intensity + 1:1 ratio between labeled and unlabeled data. 
+- Rampup_EDA ramps up indensity value from 0% to 10% during entire training step. 
 
 ## Train in NSML
-```bash
-sh run_nsml.sh
-```
-
-## Train in Local
+For EDA method, we only used ELECTRA model. 
 
 ```bash
-sh run_local.sh
+sh run_nsml_electra.sh
 ```
