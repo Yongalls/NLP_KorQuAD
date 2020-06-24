@@ -1,16 +1,3 @@
-# korquad-open-cs492h
-Korquad-Open Baseline Code for KAIST CS492H 2020 Spring
-
-## Original Author
-Seonhoon Kim (Naver)
-
-## Train in NSML
-```bash
-sh run_nsml.sh
-```
-
-## Train in Local
-
-```bash
-sh run_local.sh
-```
+# Experiment_codes
+This directory contains code with exact format of our experiments.
+For details and matching sessions with experiments, please refer to Experiment Data.pdf
