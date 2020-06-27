@@ -672,11 +672,8 @@ def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=Fal
         else:
             processor = SquadV2Processor() if args.version_2_with_negative else SquadV1Processor()
             if evaluate:
-                if strange:
-                    examples = processor.get_eval_examples('/app', filename='korquad_open_test_submit.json')
-                else:
-                    filename = args.predict_file if val_or_test == "val" else "test_data/korquad_open_test.json"
-                    examples = processor.get_eval_examples(args.data_dir, filename=filename)
+                filename = args.predict_file if val_or_test == "val" else "test_data/korquad_open_test.json"
+                examples = processor.get_eval_examples(args.data_dir, filename=filename)
             else:
                 examples = processor.get_train_examples(args.data_dir, filename=args.train_file)
 
@@ -1021,7 +1018,7 @@ def main():
 
     # Training
     if args.do_train:
-        # val_dataset is created only once to reduce overhead. 
+        # val_dataset is created only once to reduce overhead.
         val_dataset, val_examples, val_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, val_or_test="val")
         global_step, tr_loss = train(args, model, tokenizer, val_dataset, val_examples, val_features)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
