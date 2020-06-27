@@ -765,6 +765,7 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
 
         outputs = (start_logits, end_logits,) + outputs[2:]
 
+        #Loss when answer loss is on.
         if self.answer_loss:
             if start_positions is not None and end_positions is not None:
                 # If we are on multi-GPU, split add a dimension
@@ -777,6 +778,7 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
                 start_positions.clamp_(0, ignored_index)
                 end_positions.clamp_(0, ignored_index)
 
+                #Filters answerable and unanswerable
                 unanswerable = end_positions[:]==0
                 answerable = end_positions[:]!=0
                 unans_len = torch.sum(unanswerable)
@@ -805,6 +807,8 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
 
                     total_loss = (start_loss + end_loss) / 2
                 outputs = (total_loss,) + outputs
+
+        #Loss when start loss is on
         elif self.start_loss:
             if start_positions is not None and end_positions is not None:
                 # If we are on multi-GPU, split add a dimension

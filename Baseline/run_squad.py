@@ -1052,6 +1052,8 @@ def main():
 
     # Training
     if args.do_train:
+
+        #val_dataset is created only once to reduce overhead. 
         val_dataset, val_examples, val_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, val_or_test="val")
         test_dataset, test_examples, test_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, strange=True)
         global_step, tr_loss = train(args, model, tokenizer, val_dataset, val_examples, val_features, test_dataset, test_examples, test_features)
