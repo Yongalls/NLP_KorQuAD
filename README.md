@@ -3,7 +3,10 @@ Final Project for KAIST CS492H: Special Topics in Computer Science<Deep Learning
 done by Donghyun Kim([Github](https://github.com/chocolatefudge)) / Yongmin Lee([Github](https://github.com/Yongalls)). 
 
 ## Abstract
-Need to be done
+Recent trends in Natural Language Processing is mostly about gigantic, unsupervised pre-trained language models that could be fine-tuned for many target tasks. It dominates most of the NLP tasks including question answering. However, specific fine-tuning methodologies are not well provided in most of the question-answering task. Performing pre/post-processing or architectural change might bring improvements to our model. Therefore, in this research, we make an effort to find a strategy that is especially well suitable for question answering task with korquad-open dataset. 
+
+## Report
+You can check our specific experiment results and analysis on cs492h_nlp_report_15.pdf
 
 ## Overall Structure
 Our GitHub repo is divided into 5 parts. Please keep in mind that all codes in here are for NSML environment, not in local machines.  <br>
