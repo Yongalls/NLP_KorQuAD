@@ -745,18 +745,13 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
         inputs_embeds=None,
         start_positions=None,
         end_positions=None,
-        is_mixed=None
     ):
-        # print("inputs")
-        # print(len(input_ids), attention_mask.size())
 
         outputs = self.electra(
             input_ids, attention_mask, token_type_ids, position_ids, head_mask, inputs_embeds
         )
 
         sequence_output = outputs[0]
-
-        # print("sequence output: ", sequence_output.size())
 
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
@@ -765,7 +760,7 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
 
         outputs = (start_logits, end_logits,) + outputs[2:]
 
-        #Loss when answer loss is on.
+        # Loss when answer loss is on.
         if self.answer_loss:
             if start_positions is not None and end_positions is not None:
                 # If we are on multi-GPU, split add a dimension
@@ -778,7 +773,7 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
                 start_positions.clamp_(0, ignored_index)
                 end_positions.clamp_(0, ignored_index)
 
-                #Filters answerable and unanswerable
+                # Filters answerable and unanswerable
                 unanswerable = end_positions[:]==0
                 answerable = end_positions[:]!=0
                 unans_len = torch.sum(unanswerable)
@@ -807,8 +802,7 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
 
                     total_loss = (start_loss + end_loss) / 2
                 outputs = (total_loss,) + outputs
-
-        #Loss when start loss is on
+        # Loss when start loss is on
         elif self.start_loss:
             if start_positions is not None and end_positions is not None:
                 # If we are on multi-GPU, split add a dimension

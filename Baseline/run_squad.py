@@ -151,7 +151,7 @@ def bind_nsml(model, tokenizer, my_args):
     nsml.bind(save=save, load=load, infer=infer)
 
 
-def train(args, model, tokenizer, val_dataset, val_examples, val_features, test_dataset, test_examples, test_features):
+def train(args, model, tokenizer, val_dataset, val_examples, val_features):
     """ Train the model """
     nsml.save(args.model_type + "_first")
 
@@ -176,7 +176,7 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features, test_
         {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], "weight_decay": 0.0},
     ]
     print("Learning RAte: {}".format(args.learning_rate))
-    optimizer = AdamW(optimizer_grouped_parameters, lr=1e-5, eps=args.adam_epsilon)
+    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     #optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
@@ -242,8 +242,6 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features, test_
             logger.info("  Starting fine-tuning.")
 
     loss_val, logging_loss = 0.0, 0.0
-    span_loss_val, span_logging_loss = 0.0, 0.0
-    msd_loss_val, msd_logging_loss = 0.0, 0.0
 
     model.zero_grad()
     train_iterator = trange(
@@ -274,7 +272,6 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features, test_
                 "token_type_ids": batch[2],
                 "start_positions": batch[3],
                 "end_positions": batch[4],
-                "is_mixed": batch[7]
             }
 
             if args.model_type in ["xlm", "roberta", "distilbert"]:
@@ -286,12 +283,7 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features, test_
                     inputs.update({"is_impossible": batch[7]})
             outputs = model(**inputs)
 
-            # print("after forward")
-
             # model outputs are always tuple in transformers (see doc)
-            # span_loss = outputs[0]
-            # msd_loss = outputs[1]
-            # loss = span_loss + msd_loss
             loss = outputs[0]
 
             if args.n_gpu > 1:
@@ -306,8 +298,6 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features, test_
                 loss.backward()
 
             loss_val += loss.item()
-            # span_loss_val += span_loss.item()
-            # msd_loss_val += msd_loss.item()
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
@@ -327,36 +317,17 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features, test_
                         logger.info("Validation start for epoch {}".format(epoch))
                         result = evaluate(args, model, tokenizer, val_dataset, val_examples, val_features, prefix=epoch)
                         _f1, _exact = result["f1"], result["exact"]
-                        # is_best = _f1 > best_f1
-                        # best_f1 = max(_f1, best_f1)
+                        is_best = _f1 > best_f1
+                        best_f1 = max(_f1, best_f1)
 
                         current_loss = (loss_val - logging_loss) / args.logging_steps
                         logging_loss = loss_val
-                        # current_loss_span = (span_loss_val - span_logging_loss) / args.logging_steps
-                        # span_logging_loss = span_loss_val
-                        # current_loss_msd = (msd_loss_val - msd_logging_loss) / args.logging_steps
-                        # msd_logging_loss = msd_loss_val
-                        logger.info("Validation for test set start for epoch {}".format(epoch))
-                        result_test = evaluate(args, model, tokenizer, test_dataset, test_examples, test_features, prefix=epoch)
-                        _f1_test, _exact_test = result_test["f1"], result_test["exact"]
-                        is_best = _f1_test > best_f1
-                        best_f1 = max(_f1_test, best_f1)
 
-                        # current_loss = (loss_val - logging_loss) / args.logging_steps
-                        # logging_loss = loss_val
-
-                        # logger.info(
-                        #     "best_f1_val = {}, f1_val = {}, exact_val = {}, train_loss_total = {}, train_loss_span = {}, train_loss_msd = {}, global_step = {}, epoch: {}" \
-                        #     .format(best_f1, _f1, _exact, current_loss, current_loss_span, current_loss_msd, global_step, epoch))
-                        # if IS_ON_NSML:
-                        #     nsml.report(summary=True, step=global_step, f1_val=_f1, exact_val=_exact, train_loss_total=current_loss, train_loss_span=current_loss_span, train_loss_msd=current_loss_msd)
-                        #     if is_best:
-                        #         nsml.save(args.model_type + "_best")
                         logger.info(
-                            "best_f1_val_test = {}, f1_val_validation = {}, exact_val_validation = {}, f1_val_test = {}, exact_val_test = {}, train_loss_total = {}, global_step = {}, epoch: {}" \
-                            .format(best_f1, _f1, _exact, _f1_test, _exact_test, current_loss, global_step, epoch))
+                            "best_f1_val = {}, f1_val = {}, exact_val = {}, train_loss = {}, global_step = {}, epoch: {}" \
+                            .format(best_f1, _f1, _exact, current_loss, global_step, epoch))
                         if IS_ON_NSML:
-                            nsml.report(summary=True, step=global_step, f1_val_validation=_f1, exact_val_validation=_exact, f1_val_test=_f1_test, exact_val_test=_exact_test, train_loss_total=current_loss)
+                            nsml.report(summary=True, step=global_step, f1_val=_f1, exact_val=_exact, train_loss=current_loss)
                             if is_best:
                                 nsml.save(args.model_type + "_best")
 
@@ -527,6 +498,7 @@ def predict(args, model, tokenizer, val_dataset, val_examples, val_features, pre
 
     return val_examples, predictions
 
+# only for infer
 def predict_e(args, model, tokenizer, prefix="", val_or_test="val"):
 
     val_dataset, val_examples, val_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, val_or_test="test")
@@ -1036,9 +1008,6 @@ def main():
 
     logger.info("Training/evaluation parameters %s", args)
 
-    #print("Load model")
-    #nsml.load(checkpoint='electra_best', session='kaist_15/korquad-open-ldbd/310')
-
     # Before we do anything with models, we want to ensure that we get fp16 execution of torch.einsum if args.fp16 is
     # set. Otherwise it'll default to "promote" mode, and we'll get fp32 operations. Note that running
     # `--fp16_opt_level="O2"` will remove the need for this code, but it is still valid.
@@ -1052,11 +1021,9 @@ def main():
 
     # Training
     if args.do_train:
-
-        #val_dataset is created only once to reduce overhead. 
+        # val_dataset is created only once to reduce overhead. 
         val_dataset, val_examples, val_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, val_or_test="val")
-        test_dataset, test_examples, test_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, strange=True)
-        global_step, tr_loss = train(args, model, tokenizer, val_dataset, val_examples, val_features, test_dataset, test_examples, test_features)
+        global_step, tr_loss = train(args, model, tokenizer, val_dataset, val_examples, val_features)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
 

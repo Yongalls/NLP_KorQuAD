@@ -19,4 +19,8 @@ nsml run \
     --overwrite_output_dir
     --logging_steps 500
     --version_2_with_negative
+    --dropout 0.1
+    --start_loss
+    --answer_loss
+    --learning_rate 1e-5
     "

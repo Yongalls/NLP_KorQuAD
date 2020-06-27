@@ -118,8 +118,6 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
             tok_to_orig_index.append(i)
             all_doc_tokens.append(sub_token)
 
-    # print("all doc tokens: ", all_doc_tokens)
-
     if is_training and not example.is_impossible:
         tok_start_position = orig_to_tok_index[example.start_position]
         if example.end_position < len(example.doc_tokens) - 1:
@@ -144,9 +142,6 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
     span_doc_tokens = all_doc_tokens
     while len(spans) * doc_stride < len(all_doc_tokens):
 
-        # print("padding_side: ", tokenizer.padding_side)
-        # print(span_doc_tokens)
-        # print(truncated_query)
         encoded_dict = tokenizer.encode_plus(
             truncated_query if tokenizer.padding_side == "right" else span_doc_tokens,
             span_doc_tokens if tokenizer.padding_side == "right" else truncated_query,
@@ -259,7 +254,6 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
                 token_to_orig_map=span["token_to_orig_map"],
                 start_position=start_position,
                 end_position=end_position,
-                is_mixed=example.is_mixed
             )
         )
     return features
@@ -382,7 +376,6 @@ def squad_convert_examples_to_features(
         else:
             all_start_positions = torch.tensor([f.start_position for f in features], dtype=torch.long)
             all_end_positions = torch.tensor([f.end_position for f in features], dtype=torch.long)
-            all_is_mixed = torch.tensor([f.is_mixed for f in features], dtype=torch.long)
 
             dataset = TensorDataset(
                 all_input_ids,
@@ -392,7 +385,6 @@ def squad_convert_examples_to_features(
                 all_end_positions,
                 all_cls_index,
                 all_p_mask,
-                all_is_mixed
             )
 
         return features, dataset
@@ -552,28 +544,12 @@ class SquadProcessor(DataProcessor):
         examples = []
 
         has_answer_cnt, no_answer_cnt = 0, 0
-        i_test = 0
         for entry in tqdm(input_data[:]):
-            # i_test += 1
-            # if i_test >= 30:
-            #     break
             qa = entry['qa']
             question_text = qa["question"]
             answer_text = qa['answer']
             if question_text is None or answer_text is None:
                 continue
-
-            # if is_training:
-            #     mix = random.randint(0,1)
-            #     if mix == 1:
-            #         q_words = question_text.split(' ')
-            #         cut = len(q_words)//2
-            #         q_words = q_words[cut:] + q_words[:cut]
-            #         question_text = " ".join(q_words)
-            # else:
-            #     mix = 0
-
-            mix = 0
 
             per_qa_paragraph_cnt = 0
             per_qa_unans_paragraph_cnt = 0
@@ -607,7 +583,6 @@ class SquadProcessor(DataProcessor):
                     title=title,
                     is_impossible=is_impossible,
                     answers=answers,
-                    is_mixed=mix
                 )
                 if is_impossible:
                     no_answer_cnt += 1
@@ -663,7 +638,6 @@ class SquadExample(object):
             title,
             answers=[],
             is_impossible=False,
-            is_mixed=0
     ):
         self.qas_id = qas_id
         self.question_text = question_text
@@ -674,8 +648,6 @@ class SquadExample(object):
         self.answers = answers
 
         self.start_position, self.end_position = 0, 0
-
-        self.is_mixed = is_mixed
 
         doc_tokens = []
         char_to_word_offset = []
@@ -744,7 +716,6 @@ class SquadFeatures(object):
             token_to_orig_map,
             start_position,
             end_position,
-            is_mixed
     ):
         self.input_ids = input_ids
         self.attention_mask = attention_mask
@@ -761,7 +732,6 @@ class SquadFeatures(object):
 
         self.start_position = start_position
         self.end_position = end_position
-        self.is_mixed = is_mixed
 
 
 class SquadResult(object):
