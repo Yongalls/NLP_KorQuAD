@@ -21,4 +21,5 @@ nsml run \
     --K 5
     --dropout 0.1
     --gradient_accumulation_steps 4
+    --learning_rate 1e-5
     "

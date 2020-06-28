@@ -746,16 +746,12 @@ class ElectraForQuestionAnswering(ElectraPreTrainedModel):
         start_positions=None,
         end_positions=None,
     ):
-        # print("inputs")
-        # print(len(input_ids), attention_mask.size())
 
         outputs = self.electra(
             input_ids, attention_mask, token_type_ids, position_ids, head_mask, inputs_embeds
         )
 
         sequence_output = outputs[0]
-
-        # print("sequence output: ", sequence_output.size())
 
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)

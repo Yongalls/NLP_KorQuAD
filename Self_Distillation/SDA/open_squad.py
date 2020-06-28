@@ -118,8 +118,6 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
             tok_to_orig_index.append(i)
             all_doc_tokens.append(sub_token)
 
-    # print("all doc tokens: ", all_doc_tokens)
-
     if is_training and not example.is_impossible:
         tok_start_position = orig_to_tok_index[example.start_position]
         if example.end_position < len(example.doc_tokens) - 1:
@@ -144,9 +142,6 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
     span_doc_tokens = all_doc_tokens
     while len(spans) * doc_stride < len(all_doc_tokens):
 
-        # print("padding_side: ", tokenizer.padding_side)
-        # print(span_doc_tokens)
-        # print(truncated_query)
         encoded_dict = tokenizer.encode_plus(
             truncated_query if tokenizer.padding_side == "right" else span_doc_tokens,
             span_doc_tokens if tokenizer.padding_side == "right" else truncated_query,
@@ -549,28 +544,12 @@ class SquadProcessor(DataProcessor):
         examples = []
 
         has_answer_cnt, no_answer_cnt = 0, 0
-        # i_test = 0
         for entry in tqdm(input_data[:]):
-            # i_test += 1
-            # if i_test >= 30:
-            #     break
             qa = entry['qa']
             question_text = qa["question"]
             answer_text = qa['answer']
             if question_text is None or answer_text is None:
                 continue
-
-            # if is_training:
-            #     mix = random.randint(0,1)
-            #     if mix == 1:
-            #         q_words = question_text.split(' ')
-            #         cut = len(q_words)//2
-            #         q_words = q_words[cut:] + q_words[:cut]
-            #         question_text = " ".join(q_words)
-            # else:
-            #     mix = 0
-
-            # mix = 0
 
             per_qa_paragraph_cnt = 0
             per_qa_unans_paragraph_cnt = 0

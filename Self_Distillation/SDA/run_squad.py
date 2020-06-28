@@ -183,8 +183,8 @@ def train(args, model, teacher, tokenizer, val_dataset, val_examples, val_featur
         },
         {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], "weight_decay": 0.0},
     ]
-    # optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
-    optimizer = AdamW(optimizer_grouped_parameters, lr=1e-5, eps=args.adam_epsilon)
+
+    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
     )
@@ -249,7 +249,6 @@ def train(args, model, teacher, tokenizer, val_dataset, val_examples, val_featur
             logger.info("  Starting fine-tuning.")
 
     loss_val, logging_loss = 0.0, 0.0
-    # span_loss_val, span_logging_loss = 0.0, 0.0
     mse_loss_val, mse_logging_loss = 0.0, 0.0
 
     model.zero_grad()
@@ -274,8 +273,6 @@ def train(args, model, teacher, tokenizer, val_dataset, val_examples, val_featur
 
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
-
-            # print("before forward")
 
             inputs = {
                 "input_ids": batch[0],
@@ -314,14 +311,6 @@ def train(args, model, teacher, tokenizer, val_dataset, val_examples, val_featur
 
                 loss += mse_loss
 
-            # print("after forward")
-
-            # model outputs are always tuple in transformers (see doc)
-            # span_loss = outputs[0]
-            # msd_loss = outputs[1]
-            # loss = span_loss + msd_loss
-
-
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
             if args.gradient_accumulation_steps > 1:
@@ -334,8 +323,6 @@ def train(args, model, teacher, tokenizer, val_dataset, val_examples, val_featur
                 loss.backward()
 
             loss_val += loss.item()
-            # span_loss_val += span_loss.item()
-            # msd_loss_val += msd_loss.item()
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
@@ -360,11 +347,8 @@ def train(args, model, teacher, tokenizer, val_dataset, val_examples, val_featur
 
                         current_loss = (loss_val - logging_loss) / args.logging_steps
                         logging_loss = loss_val
-                        # current_loss_span = (span_loss_val - span_logging_loss) / args.logging_steps
-                        # span_logging_loss = span_loss_val
                         current_loss_mse = (mse_loss_val - mse_logging_loss) / args.logging_steps
                         mse_logging_loss = mse_loss_val
-
 
                         logger.info(
                             "best_f1_val = {}, f1_val = {}, exact_val = {}, train_loss_total = {}, train_loss_mse = {}, global_step = {}, epoch: {}" \
@@ -373,13 +357,6 @@ def train(args, model, teacher, tokenizer, val_dataset, val_examples, val_featur
                             nsml.report(summary=True, step=global_step, f1_val=_f1, exact_val=_exact, train_loss_total=current_loss, train_loss_mse=current_loss_mse)
                             if is_best:
                                 nsml.save(args.model_type + "_best")
-                        # logger.info(
-                        #     "best_f1_val = {}, f1_val = {}, exact_val = {}, train_loss_total = {}, global_step = {}, epoch: {}" \
-                        #     .format(best_f1, _f1, _exact, current_loss, global_step, epoch))
-                        # if IS_ON_NSML:
-                        #     nsml.report(summary=True, step=global_step, f1_val=_f1, exact_val=_exact, train_loss_total=current_loss)
-                        #     if is_best:
-                        #         nsml.save(args.model_type + "_best")
 
                 if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
                     if IS_ON_NSML:
@@ -401,7 +378,7 @@ def train(args, model, teacher, tokenizer, val_dataset, val_examples, val_featur
                         logger.info("Saving optimizer and scheduler states to %s", output_dir)
 
                 if use_teacher:
-                    k_list.append(copy.deepcopy(model).parameters()) # 고치기
+                    k_list.append(copy.deepcopy(model).parameters())
                     update_teacher(k_list[0], k_list[len(k_list)-1], teacher)
                     del k_list[0]
                 else:
