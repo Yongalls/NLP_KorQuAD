@@ -121,8 +121,6 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
             tok_to_orig_index.append(i)
             all_doc_tokens.append(sub_token)
 
-    # print("all doc tokens: ", all_doc_tokens)
-
     if is_training and not example.is_impossible:
         tok_start_position = orig_to_tok_index[example.start_position]
         if example.end_position < len(example.doc_tokens) - 1:
@@ -147,9 +145,6 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
     span_doc_tokens = all_doc_tokens
     while len(spans) * doc_stride < len(all_doc_tokens):
 
-        # print("padding_side: ", tokenizer.padding_side)
-        # print(span_doc_tokens)
-        # print(truncated_query)
         encoded_dict = tokenizer.encode_plus(
             truncated_query if tokenizer.padding_side == "right" else span_doc_tokens,
             span_doc_tokens if tokenizer.padding_side == "right" else truncated_query,
@@ -262,7 +257,6 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
                 token_to_orig_map=span["token_to_orig_map"],
                 start_position=start_position,
                 end_position=end_position,
-                is_mixed=example.is_mixed
             )
         )
     return features
@@ -385,7 +379,6 @@ def squad_convert_examples_to_features(
         else:
             all_start_positions = torch.tensor([f.start_position for f in features], dtype=torch.long)
             all_end_positions = torch.tensor([f.end_position for f in features], dtype=torch.long)
-            all_is_mixed = torch.tensor([f.is_mixed for f in features], dtype=torch.long)
 
             dataset = TensorDataset(
                 all_input_ids,
@@ -395,7 +388,6 @@ def squad_convert_examples_to_features(
                 all_end_positions,
                 all_cls_index,
                 all_p_mask,
-                all_is_mixed
             )
 
         return features, dataset
@@ -555,18 +547,13 @@ class SquadProcessor(DataProcessor):
         examples = []
 
         has_answer_cnt, no_answer_cnt = 0, 0
-        i_test = 0
         for entry in tqdm(input_data[:]):
-            # i_test += 1
-            # if i_test >= 10:
-            #     break
             qa = entry['qa']
             question_text = qa["question"]
             answer_text = qa['answer']
             if question_text is None or answer_text is None:
                 continue
 
-            mix = 0
             if is_training:
                 aug_question_text = eda_question(question_text)
             per_qa_paragraph_cnt = 0
@@ -589,10 +576,8 @@ class SquadProcessor(DataProcessor):
                     if is_impossible:
                         aug_context_text = eda_context(context_text,"")
                     else:
-                        # print("\nbefore context")
-                        # print(context_text)
-                        # print("answer: ", answer_text)
-
+                        # if a context contains answer texts, avoid modifying answer part.
+                        # ex. context1 + answer + context2 => augmented context1 + answer + augmented contexxt2
                         end_pos = context_text.index(answer_text) + len(answer_text)
 
                         if end_pos >= len(context_text) or _is_whitespace(context_text[end_pos]):
@@ -604,48 +589,11 @@ class SquadProcessor(DataProcessor):
                                 aug_answer_text += context_text[i_ct]
                                 i_ct += 1
 
-                        # print("becomes: ", aug_answer_text)
                         context_text_list = context_text.split(aug_answer_text)
                         aug_context_text_list = []
                         for ct in context_text_list:
                             aug_context_text_list.append(eda_context(ct,answer_text))
                         aug_context_text = aug_answer_text.join(aug_context_text_list)
-
-                        #print(context_text, aug_context_text)
-                        # print(len(context_text.split(answer_text)))
-                        # context_text_list = context_text.split('. ')
-                        # # print(len(context_text_list))
-                        # aug_context_text_list = []
-                        # ct_temp = ""
-                        # for ct in context_text_list:
-                        #     if answer_text in ct:
-                        #         aug_context_text_list.append((ct_temp, "no ans"))
-                        #         aug_context_text_list.append((ct + ". ", "ans"))
-                        #         ct_temp = ""
-                        #     else:
-                        #         ct_temp += ct + ". "
-                        #
-                        # if ct_temp != "":
-                        #     aug_context_text_list.append((ct_temp, "no ans"))
-                        #
-                        # aug_context_text = ""
-                        #
-                        # for (aug_ct,tag) in aug_context_text_list:
-                        #     if tag == "no ans":
-                        #         aug_context_text += eda_context(aug_ct, "")
-                        #     else:
-                        #         aug_context_text += aug_ct
-
-
-                        # print("after context")
-                        # print(aug_context_text)
-                    # aug_context_text = eda_context(context_text, answer_text)
-                    if not is_impossible and answer_text not in aug_context_text:
-                        print(context_text)
-                        print(answer_text)
-                        print(aug_answer_text)
-                        print(aug_context_text)
-                        raise AnswerError
 
                 if not is_impossible:
                     if is_training:
@@ -664,21 +612,9 @@ class SquadProcessor(DataProcessor):
                         title=title,
                         is_impossible=is_impossible,
                         answers=answers,
-                        is_mixed=mix
                     )
                 else:
-                    # example1 = SquadExample(
-                    #     qas_id=qas_id,
-                    #     question_text=question_text,
-                    #     context_text=context_text,
-                    #     answer_text=answer_text,
-                    #     start_position_character=aug_start_position_character,
-                    #     title=title,
-                    #     is_impossible=is_impossible,
-                    #     answers=answers,
-                    #     is_mixed=mix
-                    # )
-                    example2 = SquadExample(
+                    example = SquadExample(
                         qas_id=qas_id,
                         question_text=question_text,
                         context_text=aug_context_text,
@@ -687,7 +623,6 @@ class SquadProcessor(DataProcessor):
                         title=title,
                         is_impossible=is_impossible,
                         answers=answers,
-                        is_mixed=mix
                     )
                 if is_impossible:
                     no_answer_cnt += 1
@@ -701,11 +636,7 @@ class SquadProcessor(DataProcessor):
                 per_qa_paragraph_cnt += 1
                 if is_training and per_qa_paragraph_cnt > 3:
                     break
-                if not is_training:
-                    examples.append(example)
-                else:
-                    # examples.append(example1)
-                    examples.append(example2)
+                examples.append(example)
 
         print("[{}] Has Answer({}) / No Answer({})".format(set_type, has_answer_cnt, no_answer_cnt))
         return examples
@@ -747,7 +678,6 @@ class SquadExample(object):
             title,
             answers=[],
             is_impossible=False,
-            is_mixed=0
     ):
         self.qas_id = qas_id
         self.question_text = question_text
@@ -758,8 +688,6 @@ class SquadExample(object):
         self.answers = answers
 
         self.start_position, self.end_position = 0, 0
-
-        self.is_mixed = is_mixed
 
         doc_tokens = []
         char_to_word_offset = []
@@ -828,7 +756,6 @@ class SquadFeatures(object):
             token_to_orig_map,
             start_position,
             end_position,
-            is_mixed
     ):
         self.input_ids = input_ids
         self.attention_mask = attention_mask
@@ -845,7 +772,6 @@ class SquadFeatures(object):
 
         self.start_position = start_position
         self.end_position = end_position
-        self.is_mixed = is_mixed
 
 
 class SquadResult(object):

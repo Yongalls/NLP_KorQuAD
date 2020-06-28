@@ -153,7 +153,7 @@ def eda_question(sentence, alpha_rs=0.1):
 	return augmented_sentence
 
 
-def eda_context(sentence, answer, alpha_rs=0.05, alpha_rdu=0.05, p_rd=0.05):
+def eda_context(sentence, answer, alpha_rs=0.1, alpha_rdu=0.1, p_rd=0.1):
 	words = sentence.split(' ')
 	num_words = len(words)
 	n_rs = max(1, int(alpha_rs*num_words))

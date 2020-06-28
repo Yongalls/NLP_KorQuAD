@@ -17,7 +17,7 @@ nsml run \
     --per_gpu_eval_batch_size 24
     --output_dir output
     --overwrite_output_dir
-    --logging_steps 300
+    --logging_steps 500
     --version_2_with_negative
-    --dropout 0.2
+    --dropout 0.1
     "

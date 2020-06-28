@@ -1,16 +1,9 @@
-# korquad-open-cs492h
-Korquad-Open Baseline Code for KAIST CS492H 2020 Spring
-
-## Original Author
-Seonhoon Kim (Naver)
+# Strong EDA
+Strong EDA model (augmentation ratio = 10%)
 
 ## Train in NSML
-```bash
-sh run_nsml.sh
-```
-
-## Train in Local
+For EDA method, we only used ELECTRA model.
 
 ```bash
-sh run_local.sh
+sh run_nsml_electra.sh
 ```

@@ -19,4 +19,5 @@ nsml run \
     --logging_steps 500
     --version_2_with_negative
     --dropout 0.1
+    --learning_rate 1e-5
     "

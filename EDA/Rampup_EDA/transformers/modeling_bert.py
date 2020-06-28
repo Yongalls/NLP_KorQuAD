@@ -1420,7 +1420,6 @@ class BertForQuestionAnswering(BertPreTrainedModel):
         inputs_embeds=None,
         start_positions=None,
         end_positions=None,
-        is_mixed=None
     ):
         r"""
         start_positions (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`, defaults to :obj:`None`):
@@ -1472,9 +1471,6 @@ class BertForQuestionAnswering(BertPreTrainedModel):
 
         """
 
-
-
-
         outputs = self.bert(
             input_ids,
             attention_mask=attention_mask,
@@ -1484,10 +1480,7 @@ class BertForQuestionAnswering(BertPreTrainedModel):
             inputs_embeds=inputs_embeds,
         )
 
-
         sequence_output = outputs[0]
-
-        # print("sequence output: ", sequence_output.size())
 
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)

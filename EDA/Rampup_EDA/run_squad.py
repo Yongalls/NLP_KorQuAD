@@ -154,7 +154,7 @@ def bind_nsml(model, tokenizer, my_args):
 def train(args, model, tokenizer, val_dataset, val_examples, val_features):
     """ Train the model """
 
-    train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False, epoch=0)
+    train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
@@ -174,7 +174,7 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
         },
         {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], "weight_decay": 0.0},
     ]
-    optimizer = AdamW(optimizer_grouped_parameters, lr=1e-5, eps=args.adam_epsilon)
+    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
     )
@@ -239,8 +239,6 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
             logger.info("  Starting fine-tuning.")
 
     loss_val, logging_loss = 0.0, 0.0
-    span_loss_val, span_logging_loss = 0.0, 0.0
-    msd_loss_val, msd_logging_loss = 0.0, 0.0
 
     model.zero_grad()
     train_iterator = trange(
@@ -253,7 +251,7 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
 
     for epoch in train_iterator:
         if epoch > 0:
-            train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False, epoch=epoch)
+            train_dataset = load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False)
             print("training dataset loading finished. epoch: ", epoch)
             args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
             train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
@@ -270,15 +268,12 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
 
-            # print("before forward")
-
             inputs = {
                 "input_ids": batch[0],
                 "attention_mask": batch[1],
                 "token_type_ids": batch[2],
                 "start_positions": batch[3],
                 "end_positions": batch[4],
-                "is_mixed": batch[7]
             }
 
             if args.model_type in ["xlm", "roberta", "distilbert"]:
@@ -290,12 +285,7 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
                     inputs.update({"is_impossible": batch[7]})
             outputs = model(**inputs)
 
-            # print("after forward")
-
             # model outputs are always tuple in transformers (see doc)
-            # span_loss = outputs[0]
-            # msd_loss = outputs[1]
-            # loss = span_loss + msd_loss
             loss = outputs[0]
 
             if args.n_gpu > 1:
@@ -310,8 +300,6 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
                 loss.backward()
 
             loss_val += loss.item()
-            # span_loss_val += span_loss.item()
-            # msd_loss_val += msd_loss.item()
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
@@ -336,19 +324,7 @@ def train(args, model, tokenizer, val_dataset, val_examples, val_features):
 
                         current_loss = (loss_val - logging_loss) / args.logging_steps
                         logging_loss = loss_val
-                        # current_loss_span = (span_loss_val - span_logging_loss) / args.logging_steps
-                        # span_logging_loss = span_loss_val
-                        # current_loss_msd = (msd_loss_val - msd_logging_loss) / args.logging_steps
-                        # msd_logging_loss = msd_loss_val
 
-
-                        # logger.info(
-                        #     "best_f1_val = {}, f1_val = {}, exact_val = {}, train_loss_total = {}, train_loss_span = {}, train_loss_msd = {}, global_step = {}, epoch: {}" \
-                        #     .format(best_f1, _f1, _exact, current_loss, current_loss_span, current_loss_msd, global_step, epoch))
-                        # if IS_ON_NSML:
-                        #     nsml.report(summary=True, step=global_step, f1_val=_f1, exact_val=_exact, train_loss_total=current_loss, train_loss_span=current_loss_span, train_loss_msd=current_loss_msd)
-                        #     if is_best:
-                        #         nsml.save(args.model_type + "_best")
                         logger.info(
                             "best_f1_val = {}, f1_val = {}, exact_val = {}, train_loss_total = {}, global_step = {}, epoch: {}" \
                             .format(best_f1, _f1, _exact, current_loss, global_step, epoch))
@@ -524,6 +500,7 @@ def predict(args, model, tokenizer, val_dataset, val_examples, val_features, pre
 
     return val_examples, predictions
 
+# only for _infer
 def predict_e(args, model, tokenizer, prefix="", val_or_test="val"):
 
     val_dataset, val_examples, val_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, val_or_test="test")
@@ -654,7 +631,7 @@ def predict_e(args, model, tokenizer, prefix="", val_or_test="val"):
     return val_examples, predictions
 
 
-def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False, val_or_test="val", epoch=0):
+def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False, val_or_test="val"):
     if args.local_rank not in [-1, 0] and not evaluate:
         # Make sure only the first process in distributed training process the dataset,
         # and the others will use the cache.
@@ -694,14 +671,13 @@ def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=Fal
 
             tfds_examples = tfds.load("squad")
             examples = SquadV1Processor().get_examples_from_dataset(tfds_examples, evaluate=evaluate)
-            print("afklj")
         else:
             processor = SquadV2Processor() if args.version_2_with_negative else SquadV1Processor()
             if evaluate:
                 filename = args.predict_file if val_or_test == "val" else "test_data/korquad_open_test.json"
                 examples = processor.get_eval_examples(args.data_dir, filename=filename)
             else:
-                examples = processor.get_train_examples(args.data_dir, epoch, filename=args.train_file)
+                examples = processor.get_train_examples(args.data_dir, filename=args.train_file)
 
         print("Starting squad_convert_examples_to_features")
         features, dataset = squad_convert_examples_to_features(
@@ -1008,7 +984,6 @@ def main():
         cache_dir=args.cache_dir if args.cache_dir else None,
     )
 
-
     if args.start_loss:
         model.start_loss = True
     if args.answer_loss:
@@ -1042,6 +1017,7 @@ def main():
 
     # Training
     if args.do_train:
+        # val_dataset is created only once to reduce overhead.
         val_dataset, val_examples, val_features = load_and_cache_examples(args, tokenizer, evaluate=True, output_examples=True, val_or_test="val")
         global_step, tr_loss = train(args, model, tokenizer, val_dataset, val_examples, val_features)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
